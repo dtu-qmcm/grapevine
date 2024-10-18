@@ -1,0 +1,29 @@
+[project]
+name = "grapevine"
+version = "0.1.0"
+description = "Faster Hamiltonian trajectories for problems with guesses, using Blackjax"
+authors = [
+    {name = "Teddy Groves", email = "tedgro@dtu.dk"},
+]
+dependencies = [
+    "blackjax>=1.2.4",
+    "jax==0.4.33",
+]
+requires-python = ">=3.12"
+readme = "README.md"
+license = {text = "MIT"}
+
+[project.optional-dependencies]
+demos = [
+    "optimistix>=0.0.8",
+]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[tool.pdm]
+distribution = true
+
+[tool.hatch.metadata]
+allow-direct-references = true
