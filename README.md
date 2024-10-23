@@ -1,8 +1,8 @@
 # grapevine
 
-JAX/Blackjax implementation of the grapevine method for reusing the solutions of guessing problems embedded in Hamiltonian trajectories. 
+JAX/Blackjax implementation of the grapevine method for reusing the solutions of guessing problems embedded in Hamiltonian trajectories.
 
-The grapevine method can dramatically speed up MCMC for statistical with embedded equation solving problems. 
+The grapevine method can dramatically speed up MCMC for statistical with embedded equation solving problems.
 
 ## Installation
 

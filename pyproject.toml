@@ -1,5 +1,5 @@
 [project]
-name = "grapevine"
+name = "grapevine-mcmc"
 version = "0.1.0"
 description = "Faster Hamiltonian trajectories for problems with guesses, using Blackjax"
 authors = [
@@ -33,3 +33,6 @@ dev = [
 ]
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/grapevine"]

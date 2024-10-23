@@ -1,4 +1,5 @@
 """Simple example problems for other tests to use."""
+
 from functools import partial
 
 from jax.scipy.special import expit

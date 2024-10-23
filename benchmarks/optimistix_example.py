@@ -1,6 +1,6 @@
 """An example comparing GrapeNUTS and NUTS on a representative problem.
 
-This is supposed to be a complete example, mirroring how the grapevine method is used in practice.  
+This is supposed to be a complete example, mirroring how the grapevine method is used in practice.
 
 
 """
