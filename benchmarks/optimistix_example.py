@@ -8,7 +8,6 @@ This is supposed to be a complete example, mirroring how the grapevine method is
 from functools import partial
 import timeit
 
-from blackjax.mcmc.nuts import NUTSInfo
 from blackjax.util import run_inference_algorithm
 from grapevine.grapenuts import GrapeNUTSState
 import jax
@@ -19,7 +18,7 @@ from blackjax import nuts
 from blackjax import window_adaptation as nuts_window_adaptation
 from jax.scipy.stats import norm
 
-from grapevine import run_grapenuts, grapenuts_sampler
+from grapevine import run_grapenuts
 
 # Use 64 bit floats
 jax.config.update("jax_enable_x64", True)
