@@ -1,6 +1,7 @@
 """Simple example problems for other tests to use."""
 from functools import partial
 
+from jax.scipy.special import expit
 from jax.scipy.stats import norm
 from jax import numpy as jnp
 
@@ -14,7 +15,7 @@ obs = jnp.array(0.7)
 def fn(y, args):
     """Equation defining a root-finding problem."""
     a = args
-    return y - jnp.tanh(y * a + 1)
+    return y - jnp.tanh(y * expit(a) + 1)
 
 
 def joint_logdensity(a, obs, guess):
