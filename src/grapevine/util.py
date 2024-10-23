@@ -1,12 +1,11 @@
 """Provides utility function `run_grapenuts`."""
 
-import functools
 from typing import Callable, TypedDict, Unpack
 
-import blackjax
 import jax
 
 from blackjax.types import ArrayTree
+from blackjax.util import run_inference_algorithm
 from jax._src.random import KeyArray
 
 from grapevine import grapenuts_sampler, grapevine_velocity_verlet
@@ -22,19 +21,6 @@ class AdaptationKwargs(TypedDict):
     target_acceptance_rate: float
 
 
-@functools.partial(jax.jit, static_argnames=["kernel", "num_samples"])
-def _inference_loop(rng_key, kernel, initial_state, num_samples):
-    """Run MCMC with blackjax."""
-
-    def one_step(state, rng_key):
-        state, info = kernel(rng_key, state)
-        return state, (state, info)
-
-    keys = jax.random.split(rng_key, num_samples)
-    _, (states, info) = jax.lax.scan(one_step, initial_state, keys)
-    return states, info
-
-
 def run_grapenuts(
     logdensity_fn: Callable,
     rng_key: KeyArray,
@@ -42,6 +28,7 @@ def run_grapenuts(
     num_warmup: int,
     num_samples: int,
     default_guess: ArrayTree,
+    progress_bar: bool = True,
     **adapt_kwargs: Unpack[AdaptationKwargs],
 ):
     """Run the default NUTS algorithm with blackjax."""
@@ -49,7 +36,7 @@ def run_grapenuts(
         grapenuts_sampler,
         logdensity_fn,
         default_guess=default_guess,
-        progress_bar=True,
+        progress_bar=progress_bar,
         integrator=grapevine_velocity_verlet,
         **adapt_kwargs,
     )
@@ -64,11 +51,12 @@ def run_grapenuts(
         logdensity_fn,
         default_guess=default_guess,
         **tuned_parameters,
-    ).step
-    states, info = _inference_loop(
+    )
+    _, (states, info) = run_inference_algorithm(
         sample_key,
-        kernel=kernel,
+        kernel,
+        num_steps=num_samples,
         initial_state=initial_state,
-        num_samples=num_samples,
+        progress_bar=progress_bar,
     )
     return states, info
