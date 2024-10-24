@@ -2,6 +2,7 @@
 
 from typing import Callable, TypedDict, Unpack
 
+import equinox as eqx
 import jax
 
 from blackjax.types import ArrayTree
@@ -21,6 +22,7 @@ class AdaptationKwargs(TypedDict):
     target_acceptance_rate: float
 
 
+@eqx.filter_jit
 def run_grapenuts(
     logdensity_fn: Callable,
     rng_key: KeyArray,
