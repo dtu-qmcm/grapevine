@@ -8,7 +8,6 @@ import jax
 
 from blackjax.types import ArrayTree
 from blackjax.util import run_inference_algorithm
-from jax._src.random import KeyArray
 from jax import numpy as jnp
 
 from grapevine import grapenuts_sampler, grapevine_velocity_verlet
@@ -27,7 +26,7 @@ class AdaptationKwargs(TypedDict):
 @eqx.filter_jit
 def run_grapenuts(
     logdensity_fn: Callable,
-    rng_key: KeyArray,
+    rng_key: jax.Array,
     init_parameters: ArrayTree,
     num_warmup: int,
     num_samples: int,
