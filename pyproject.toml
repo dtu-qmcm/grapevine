@@ -8,6 +8,7 @@ authors = [
 dependencies = [
     "blackjax>=1.2.4",
     "arviz>=0.20.0",
+    "polars>=1.19.0",
 ]
 requires-python = ">=3.12"
 readme = "README.md"
@@ -19,7 +20,6 @@ demos = [
 ]
 benchmarks = [
     "cmdstanpy>=1.2.4",
-    "polars>=1.12.0",
     "matplotlib>=3.9.2",
 ]
 [build-system]
