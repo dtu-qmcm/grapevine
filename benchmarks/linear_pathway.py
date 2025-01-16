@@ -14,22 +14,22 @@ The benchmark proceeds by first choosing some true parameter values (see diction
 
 """
 
-import logging
-import timeit
+import time
 from collections import OrderedDict
 from functools import partial
 from pathlib import Path
 
 import arviz as az
+import diffrax
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import lineax
 import optimistix as optx
 import polars as pl
 from blackjax import nuts
 from blackjax import window_adaptation as nuts_window_adaptation
 from blackjax.util import run_inference_algorithm
-from cmdstanpy import CmdStanModel
 from jax.scipy.stats import norm
 
 from grapevine import run_grapenuts, get_idata
@@ -41,7 +41,6 @@ jax.config.update("jax_enable_x64", True)
 SEED = 1234
 SD = 0.05
 HERE = Path(__file__).parent
-STAN_FILE = HERE / "linear_pathway.stan"
 CSV_OUTPUT_FILE = HERE / "linear_pathway.csv"
 TRUE_PARAMS = OrderedDict(
     log_km=jnp.array([2.0, 3.0]),
@@ -57,24 +56,19 @@ INIT_STEPSIZE = 0.0001
 MAX_TREEDEPTH = 10
 TARGET_ACCEPT = 0.95
 
-
-# override timeit template:
-# see https://stackoverflow.com/questions/24812253/how-can-i-capture-return-value-with-python-timeit-module
-timeit.template = """
-def inner(_it, _timer{init}):
-    {setup}
-    _t0 = _timer()
-    for _i in _it:
-        retval = {stmt}
-    _t1 = _timer()
-    return _t1 - _t0, retval
-"""
+ode_solver = diffrax.Tsit5()
+steady_state_cond = diffrax.steady_state_event()
+steady_state_event = diffrax.Event(steady_state_cond)
+adjoint = diffrax.ImplicitAdjoint(
+    linear_solver=lineax.AutoLinearSolver(well_posed=False)
+)
+controller = diffrax.PIDController(pcoeff=0.1, icoeff=0.3, rtol=1e-9, atol=1e-9)
 
 
 @eqx.filter_jit
 def rmm(s, p, km_s, km_p, vmax, k_eq):
     """Reversible Michaelis Menten rate law"""
-    num = vmax * (s - p / k_eq) / km_s
+    num = vmax / km_s * (s - p / k_eq)
     denom = 1 + s / km_s + p / km_p
     return num / denom
 
@@ -125,6 +119,45 @@ def joint_logdensity_grapenuts(params, obs, guess):
 
 
 @eqx.filter_jit
+def joint_logdensity_grapenuts_jac(params, obs, guess):
+    jac = jax.jacfwd(fn, argnums=0)(guess, params)
+    inv_jac = jnp.linalg.inv(jac)
+
+    def f_aux(t, x, args):
+        inv_jac, params = args
+        return -inv_jac @ fn(x, params) * jnp.log(0.2) / jnp.log(0.8) / (1 - t)
+
+    term = diffrax.ODETerm(f_aux)
+
+    sol = diffrax.diffeqsolve(
+        terms=term,
+        solver=ode_solver,
+        t0=0.0,
+        t1=0.99999,
+        dt0=0.01,
+        y0=guess,
+        max_steps=None,
+        args=(inv_jac, params),
+        stepsize_controller=controller,
+        adjoint=adjoint,
+    )
+    if sol.ys is None:
+        raise ValueError("No steady state found!")
+    log_km, log_vmax, log_keq, log_kf, log_conc_ext = params.values()
+    log_prior = jnp.sum(
+        norm.logpdf(log_km, loc=TRUE_PARAMS["log_km"], scale=0.1).sum()
+        + norm.logpdf(log_vmax, loc=TRUE_PARAMS["log_vmax"], scale=0.1).sum()
+        + norm.logpdf(log_keq, loc=TRUE_PARAMS["log_keq"], scale=0.1).sum()
+        + norm.logpdf(log_kf, loc=TRUE_PARAMS["log_kf"], scale=0.1).sum()
+        + norm.logpdf(log_conc_ext, loc=TRUE_PARAMS["log_conc_ext"], scale=0.1).sum()
+    )
+    log_likelihood = norm.logpdf(
+        jnp.log(obs), loc=jnp.log(sol.ys[0]), scale=jnp.full(obs.shape, SD)
+    ).sum()
+    return log_prior + log_likelihood, sol.ys[0]
+
+
+@eqx.filter_jit
 def joint_logdensity_nuts(params, obs):
     ld, _ = joint_logdensity_grapenuts(params, obs, DEFAULT_GUESS)
     return ld
@@ -138,115 +171,143 @@ def simulate(key, params, guess):
     )
 
 
-def fit_stan(sim):
-    data = {
-        "y": sim,
-        "sd": SD,
-        "prior_log_km": [TRUE_PARAMS["log_km"].tolist(), [0.1, 0.1]],
-        "prior_log_vmax": [TRUE_PARAMS["log_vmax"].tolist(), 0.1],
-        "prior_log_keq": [TRUE_PARAMS["log_keq"].tolist(), [0.1, 0.1, 0.1]],
-        "prior_log_kf": [TRUE_PARAMS["log_kf"].tolist(), [0.1, 0.1]],
-        "prior_log_cext": [TRUE_PARAMS["log_conc_ext"].tolist(), [0.1, 0.1]],
-        "y_guess": DEFAULT_GUESS.tolist(),
-        "scaling_step": 1e-9,
-        "ftol": 1e-9,
-        "max_steps": 1000,
-    }
-    model = CmdStanModel(stan_file=STAN_FILE)
-    mcmc = model.sample(
-        data=data,
-        chains=1,
-        inits={k: v.tolist() for k, v in TRUE_PARAMS.items()},
-        iter_warmup=N_WARMUP,
-        iter_sampling=N_SAMPLE,
-        adapt_delta=TARGET_ACCEPT,
-        step_size=INIT_STEPSIZE,
-        max_treedepth=MAX_TREEDEPTH,
-        show_progress=False,
-        seed=SEED,
+def time_grapenuts_run(key, posterior_logdensity, true_params, default_guess):
+    run_fn = partial(
+        run_grapenuts,
+        logdensity_fn=posterior_logdensity,
+        rng_key=key,
+        init_parameters=true_params,
+        default_guess=default_guess,
+        num_warmup=N_WARMUP,
+        num_samples=N_SAMPLE,
+        initial_step_size=INIT_STEPSIZE,
+        max_num_doublings=MAX_TREEDEPTH,
+        is_mass_matrix_diagonal=False,
+        target_acceptance_rate=TARGET_ACCEPT,
+        progress_bar=False,
     )
-    return mcmc
+    _ = run_fn()  # dummy run for jitting
+    start = time.time()
+    out = run_fn()
+    end = time.time()
+    runtime = end - start
+    idata = get_idata(*out)
+    neff = az.ess(idata.sample_stats)["energy"].item()  # type: ignore
+    return {
+        "algorithm": "grapeNUTS",
+        "time": runtime,
+        "neff": neff,
+    }
+
+
+def time_nuts_run(key, posterior_logdensity, true_params):
+    key_warmup, key_sampling = jax.random.split(key)
+    warmup = nuts_window_adaptation(
+        nuts,
+        posterior_logdensity,
+        progress_bar=False,
+        initial_step_size=INIT_STEPSIZE,
+        max_num_doublings=MAX_TREEDEPTH,
+        is_mass_matrix_diagonal=False,
+        target_acceptance_rate=TARGET_ACCEPT,
+    )
+
+    def run_fn():
+        (initial_state, tuned_parameters), _ = warmup.run(
+            key_warmup,
+            true_params,
+            num_steps=N_WARMUP,  #  type: ignore
+        )
+        kernel = nuts(posterior_logdensity, **tuned_parameters)
+        (_, out) = run_inference_algorithm(
+            key_sampling,
+            kernel,
+            N_SAMPLE,
+            initial_state,
+        )
+        return out
+
+    _ = run_fn()  # dummy run for jitting
+    start = time.time()
+    out = run_fn()
+    end = time.time()
+    runtime = end - start
+    idata = get_idata(*out)
+    neff = az.ess(idata.sample_stats)["energy"].item()  # type: ignore
+    return {
+        "algorithm": "NUTS",
+        "time": runtime,
+        "neff": neff,
+    }
+
+
+def run_single_comparison(
+    key: jax.Array, true_params: dict
+) -> tuple[jax.Array, dict, dict, dict]:
+    key, sim_key = jax.random.split(key)
+    key, grapenuts_key = jax.random.split(key)
+    key, grapenuts_key_jac = jax.random.split(key)
+    key, nuts_key = jax.random.split(key)
+    default_guess = DEFAULT_GUESS
+    # simulate
+    _, sim = simulate(sim_key, true_params, default_guess)
+    # posteriors
+    posterior_logdensity_gn = partial(joint_logdensity_grapenuts, obs=sim)
+    posterior_logdensity_gn_jac = partial(joint_logdensity_grapenuts_jac, obs=sim)
+    posterior_logdensity_nuts = partial(joint_logdensity_nuts, obs=sim)
+    # results
+    result_gn = time_grapenuts_run(
+        grapenuts_key,
+        posterior_logdensity_gn,
+        true_params,
+        default_guess,
+    )
+    result_gn_jac = time_grapenuts_run(
+        grapenuts_key_jac,
+        posterior_logdensity_gn_jac,
+        true_params,
+        default_guess,
+    )
+    result_nuts = time_nuts_run(
+        nuts_key,
+        posterior_logdensity_nuts,
+        true_params,
+    )
+    return (
+        key,
+        result_gn,
+        result_gn_jac,
+        result_nuts,
+    )
+
+
+def run_comparison(n_test: int):
+    key = jax.random.key(SEED)
+    results = []
+    for i in range(n_test):
+        key, result_gn, result_gn_jac, result_nuts = run_single_comparison(
+            key,
+            TRUE_PARAMS,
+        )
+        result_gn["repeat"] = i
+        result_gn_jac["repeat"] = i
+        result_nuts["repeat"] = i
+        results += [
+            result_gn,
+            result_gn_jac,
+            result_nuts,
+        ]
+    return pl.from_records(results).with_columns(
+        (pl.col("neff") / pl.col("time")).alias("neff/s")
+    )
 
 
 def main():
-    cmdstanpy_logger = logging.getLogger("cmdstanpy")
-    cmdstanpy_logger.disabled = True
-    key = jax.random.key(SEED)
-    key, sim_key = jax.random.split(key)
-    _, sim = simulate(sim_key, TRUE_PARAMS, DEFAULT_GUESS)
-    posterior_logdensity_gn = partial(joint_logdensity_grapenuts, obs=sim)
-    posterior_logdensity_nuts = partial(joint_logdensity_nuts, obs=sim)
-    key, grapenuts_key = jax.random.split(key)
-    key, nuts_key_warmup = jax.random.split(key)
-    key, nuts_key_sampling = jax.random.split(key)
-
-    def run_grapenuts_example():
-        return run_grapenuts(
-            posterior_logdensity_gn,
-            grapenuts_key,
-            init_parameters=TRUE_PARAMS,
-            default_guess=DEFAULT_GUESS,
-            num_warmup=1000,
-            num_samples=1000,
-            initial_step_size=0.0001,
-            max_num_doublings=10,
-            is_mass_matrix_diagonal=False,
-            target_acceptance_rate=0.95,
-            progress_bar=False,
-        )
-
-    def run_nuts_example():
-        warmup = nuts_window_adaptation(
-            nuts,
-            posterior_logdensity_nuts,
-            progress_bar=False,
-            initial_step_size=0.0001,
-            max_num_doublings=10,
-            is_mass_matrix_diagonal=False,
-            target_acceptance_rate=0.95,
-        )
-        (initial_state, tuned_parameters), _ = warmup.run(
-            nuts_key_warmup,
-            TRUE_PARAMS,
-            num_steps=1000,  #  type: ignore
-        )
-        kernel = nuts(posterior_logdensity_nuts, **tuned_parameters)
-        return run_inference_algorithm(
-            nuts_key_sampling,
-            kernel,
-            1000,
-            initial_state,
-        )
-
-    def run_stan_example():
-        return fit_stan(sim.tolist())
-
-    results = []
-
-    _ = run_stan_example()  # run once for jitting
-    _ = run_grapenuts_example()  # run once for jitting
-    _ = run_nuts_example()  # run once for jitting
-    for _ in range(10):
-        _ = run_nuts_example()  # one more time to be safe!
-        time_nuts, (_, out_nuts) = timeit.timeit(run_nuts_example, number=1)
-        idata_nuts = get_idata(*out_nuts)
-        neff_nuts = az.ess(idata_nuts.sample_stats)["energy"].item()
-        time_gn, out_gn = timeit.timeit(run_grapenuts_example, number=1)
-        idata_gn = get_idata(*out_gn)
-        neff_gn = az.ess(idata_gn.sample_stats)["energy"].item()
-        results += [{"algorithm": "grapeNUTS", "time": time_gn, "neff": neff_gn}]
-        results += [{"algorithm": "NUTS", "time": time_nuts, "neff": neff_nuts}]
-        time_stan, mcmc = timeit.timeit(run_stan_example, number=1)
-        idata_stan = az.from_cmdstanpy(mcmc)
-        neff_stan = az.ess(idata_stan.sample_stats)["lp"].item()
-        results += [{"algorithm": "Stan", "time": time_stan, "neff": neff_stan}]
-    results_df = pl.from_records(results).with_columns(
-        neff_per_s=pl.col("neff") / pl.col("time")
-    )
+    results = run_comparison(n_test=1)
     print(f"Benchmark results saved to {CSV_OUTPUT_FILE}")
     print("Mean results:")
-    results_df.write_csv(CSV_OUTPUT_FILE)
-    print(results_df.group_by("algorithm").mean())
+    results.write_csv(CSV_OUTPUT_FILE)
+    print(results)
 
 
 if __name__ == "__main__":

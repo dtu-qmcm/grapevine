@@ -189,7 +189,11 @@ def run_comparison(dim: int, n_test: int):
         key, truth_key = jax.random.split(key)
         true_theta = jax.random.uniform(truth_key, (dim,), minval=0.85, maxval=1.15)
         true_params = {"theta": true_theta}
-        key, result_gn, result_nuts = run_single_comparison(key, true_params, dim)
+        key, result_gn, result_nuts = run_single_comparison(
+            key,
+            true_params,
+            dim,
+        )
         result_gn["repeat"] = i
         result_nuts["repeat"] = i
         results += [result_gn, result_nuts]
