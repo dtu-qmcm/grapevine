@@ -76,9 +76,17 @@ def build_kernel(
         position, logdensity, logdensity_grad, guess = state
         momentum = metric.sample_momentum(key_momentum, position)
         integrator_state = GrapevineIntegratorState(
-            position, momentum, logdensity, logdensity_grad, guess
+            position,
+            momentum,
+            logdensity,
+            logdensity_grad,
+            guess,
         )
-        proposal, info = proposal_generator(key_integrator, integrator_state, step_size)
+        proposal, info = proposal_generator(
+            key_integrator,
+            integrator_state,
+            step_size,
+        )
         proposal = GrapeNUTSState(
             proposal.position,
             proposal.logdensity,

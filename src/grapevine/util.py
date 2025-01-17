@@ -1,11 +1,12 @@
 """Provides utility function `run_grapenuts`."""
 
+import time
 from typing import Callable, TypedDict, Unpack
 
 import arviz as az
-import equinox as eqx
 import jax
-
+from blackjax import nuts
+from blackjax import window_adaptation as nuts_window_adaptation
 from blackjax.types import ArrayTree
 from blackjax.util import run_inference_algorithm
 from jax import numpy as jnp
@@ -23,7 +24,6 @@ class AdaptationKwargs(TypedDict):
     target_acceptance_rate: float
 
 
-@eqx.filter_jit
 def run_grapenuts(
     logdensity_fn: Callable,
     rng_key: jax.Array,
@@ -65,6 +65,38 @@ def run_grapenuts(
     return states, info
 
 
+def run_nuts(
+    logdensity_fn: Callable,
+    rng_key: jax.Array,
+    init_parameters: ArrayTree,
+    num_warmup: int,
+    num_samples: int,
+    progress_bar: bool = True,
+    **adapt_kwargs: Unpack[AdaptationKwargs],
+):
+    """Run the default NUTS algorithm with blackjax."""
+    warmup = nuts_window_adaptation(
+        nuts,
+        logdensity_fn,
+        progress_bar=progress_bar,
+        **adapt_kwargs,
+    )
+    warmup_key, sample_key = jax.random.split(rng_key, 2)
+    (initial_state, tuned_parameters), _ = warmup.run(
+        warmup_key,
+        init_parameters,
+        num_steps=num_warmup,  #  type: ignore
+    )
+    kernel = nuts(logdensity_fn, **tuned_parameters)
+    (_, out) = run_inference_algorithm(
+        sample_key,
+        kernel,
+        num_samples,
+        initial_state,
+    )
+    return out
+
+
 def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
     """Get an arviz InferenceData from a grapeNUTS output."""
     sample_dict = {k: jnp.expand_dims(v, 0) for k, v in samples.position.items()}
@@ -84,3 +116,20 @@ def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
     idata = az.concat(posterior, sample_stats)
     assert idata is not None, "idata should not be None!"
     return idata
+
+
+def time_run(run_fn, test_var: str | None = None):
+    _ = run_fn()  # dummy run for jit compiling
+    start = time.time()
+    out = run_fn()
+    _ = next(iter(out[0].position.values())).block_until_ready()
+    end = time.time()
+    idata = get_idata(*out)
+    runtime = end - start
+    ess = az.ess(idata.posterior)  # type: ignore
+    if test_var is None:
+        k = next(iter(ess))
+        neff = ess[k].mean()
+    else:
+        neff = ess[test_var].mean()
+    return {"time": runtime, "neff": neff}

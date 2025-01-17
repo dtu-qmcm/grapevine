@@ -23,6 +23,7 @@ from grapevine.integrator import (
     GrapevineIntegratorState,
 )
 from grapevine import run_grapenuts
+from grapevine.example_functions import rosenbrock2d
 
 SEED = 1234
 N_WARMUP = 1000
@@ -40,11 +41,6 @@ metric = default_metric(inverse_mass_matrix)
 TRUE_PARAMS = jnp.array([1.3, 0.8])
 DEFAULT_GUESS = TRUE_PARAMS
 INITIAL_POSITION = jnp.array([1.0404058, 1.0131096])
-
-
-def rosenbrock2d(x: jax.Array, args: jax.Array) -> Scalar:
-    xt = x * args
-    return (1 - xt[0]) ** 2 + 100 * (xt[1] - xt[0] ** 2) ** 2
 
 
 def camel(x: jax.Array, args: jax.Array) -> Scalar:
