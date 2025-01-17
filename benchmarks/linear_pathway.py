@@ -87,7 +87,6 @@ def joint_logdensity_grapenuts(params, obs, guess):
     return log_prior + log_likelihood, sol.value
 
 
-@eqx.filter_jit
 def joint_logdensity_grapenuts_jac(params, obs, guess):
     jac = jax.jacfwd(linear_pathway_steady_state, argnums=0)(guess, params)
     inv_jac = jnp.linalg.inv(jac)
