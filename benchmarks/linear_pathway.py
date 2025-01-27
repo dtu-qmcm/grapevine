@@ -6,11 +6,11 @@ The problem is a steady kinetic model of a linear pathway with this structure:
 
 Reactions r1 and r3 behave according to the law of mass action, and reaction r2 according to the Michaelis Menten rate law. We assume we have measurements of Aint and Bint, as well as plenty of information about all the kinetic parameters and boundary conditions, and that the pathway is in a steady state, so that the concentrations c_m1_int and c_m2_int are not changing.
 
-To formulate this situation as a statistical modelling problem, there are two functions `rmm` and `ma` that specify rate laws, and another function `fn` that specifies a steady state problem, i.e. finding values for c_m1_int and c_m2_int that put the system in a steady state.
+To formulate this situation as a statistical modelling problem, there is a function `linear_pathway_steady_state` that specifies a steady state problem, i.e. finding values for c_m1_int and c_m2_int that put the system in a steady state.
 
 We can then specify joint and posterior log density functions in terms of log scale parameters, which we can sample using GrapeNUTS.
 
-The benchmark proceeds by first choosing some true parameter values (see dictionary `TRUE_PARAMS`), and then simulating some measurements of c_m1_int and c_m2_int using these parameters: see function `simulate` for how this works. Then the log posterior is sampled using NUTS and GrapeNUTS, and the times are printed.
+The benchmark proceeds by repeatedly choosing some true parameter values at random by perturbing the dictionary `TRUE_PARAMS`, then using these parameters to simulate some measurements of c_m1_int and c_m2_int. Then the log posterior is sampled using NUTS and GrapeNUTS, and the relative ess/second valeus are printed.
 
 """
 
@@ -18,11 +18,9 @@ from collections import OrderedDict
 from functools import partial
 from pathlib import Path
 
-import diffrax
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import lineax
 import optimistix as optx
 import polars as pl
 from jax.scipy.stats import norm
@@ -36,33 +34,25 @@ jax.config.update("jax_enable_x64", True)
 
 SEED = 1234
 ERROR_SD = 0.05
+PARAM_SD = 0.02
 HERE = Path(__file__).parent
 CSV_OUTPUT_FILE = HERE / "linear_pathway.csv"
 TRUE_PARAMS = OrderedDict(
-    log_km=jnp.array([2.0, 3.0]),
-    log_vmax=jnp.array(0.0),
+    log_km=jnp.array([2.0, 2.0]),
+    log_vmax=jnp.array(3.0),
     log_keq=jnp.array([1.0, 1.0, 1.0]),
     log_kf=jnp.array([1.0, -1.0]),
     log_conc_ext=jnp.array([1.0, 0.0]),
 )
 DEFAULT_GUESS = jnp.array([0.1, 0.1])
-N_WARMUP = 1000
+N_WARMUP = 2000
 N_SAMPLE = 1000
 INIT_STEPSIZE = 0.0001
 MAX_TREEDEPTH = 10
-TARGET_ACCEPT = 0.99
+TARGET_ACCEPT = 0.9
 N_TEST = 6
 
-ode_solver = diffrax.Tsit5()
-steady_state_cond = diffrax.steady_state_event()
-steady_state_event = diffrax.Event(steady_state_cond)
-adjoint = diffrax.ImplicitAdjoint(
-    linear_solver=lineax.AutoLinearSolver(well_posed=False)
-)
-controller = diffrax.PIDController(pcoeff=0.1, icoeff=0.3, rtol=1e-9, atol=1e-9)
-
-
-solver = optx.Newton(rtol=1e-9, atol=1e-9)
+solver = optx.Newton(rtol=1e-5, atol=1e-5)
 
 
 def joint_logdensity_grapenuts(params, obs, guess):
@@ -87,50 +77,6 @@ def joint_logdensity_grapenuts(params, obs, guess):
     return log_prior + log_likelihood, sol.value
 
 
-def joint_logdensity_grapenuts_jac(params, obs, guess):
-    jac = jax.jacfwd(linear_pathway_steady_state, argnums=0)(guess, params)
-    inv_jac = jnp.linalg.inv(jac)
-
-    def f_aux(t, x, args):
-        inv_jac, params = args
-        return (
-            -inv_jac
-            @ linear_pathway_steady_state(x, params)
-            * jnp.log(0.2)
-            / jnp.log(0.8)
-            / (1 - t)
-        )
-
-    term = diffrax.ODETerm(f_aux)
-
-    sol = diffrax.diffeqsolve(
-        terms=term,
-        solver=ode_solver,
-        t0=0.0,
-        t1=0.99999,
-        dt0=0.01,
-        y0=guess,
-        max_steps=None,
-        args=(inv_jac, params),
-        stepsize_controller=controller,
-        adjoint=adjoint,
-    )
-    if sol.ys is None:
-        raise ValueError("No steady state found!")
-    log_km, log_vmax, log_keq, log_kf, log_conc_ext = params.values()
-    log_prior = jnp.sum(
-        norm.logpdf(log_km, loc=TRUE_PARAMS["log_km"], scale=0.1).sum()
-        + norm.logpdf(log_vmax, loc=TRUE_PARAMS["log_vmax"], scale=0.1).sum()
-        + norm.logpdf(log_keq, loc=TRUE_PARAMS["log_keq"], scale=0.1).sum()
-        + norm.logpdf(log_kf, loc=TRUE_PARAMS["log_kf"], scale=0.1).sum()
-        + norm.logpdf(log_conc_ext, loc=TRUE_PARAMS["log_conc_ext"], scale=0.1).sum()
-    )
-    log_likelihood = norm.logpdf(
-        jnp.log(obs), loc=jnp.log(sol.ys[0]), scale=jnp.full(obs.shape, ERROR_SD)
-    ).sum()
-    return log_prior + log_likelihood, sol.ys[0]
-
-
 def joint_logdensity_nuts(params, obs):
     ld, _ = joint_logdensity_grapenuts(params, obs, DEFAULT_GUESS)
     return ld
@@ -148,10 +94,10 @@ def simulate(key, params, guess):
     )
 
 
-def compare(key: jax.Array) -> dict:
+def compare_single(key: jax.Array, params) -> dict:
     sim_key, grapenuts_key, nuts_key = jax.random.split(key, 3)
     # simulate
-    _, sim = simulate(sim_key, TRUE_PARAMS, DEFAULT_GUESS)
+    _, sim = simulate(sim_key, params, DEFAULT_GUESS)
     # posteriors
     posterior_logdensity_gn = partial(joint_logdensity_grapenuts, obs=sim)
     posterior_logdensity_nuts = partial(joint_logdensity_nuts, obs=sim)
@@ -160,7 +106,7 @@ def compare(key: jax.Array) -> dict:
             run_grapenuts,
             logdensity_fn=posterior_logdensity_gn,
             rng_key=grapenuts_key,
-            init_parameters=TRUE_PARAMS,
+            init_parameters=params,
             default_guess=DEFAULT_GUESS,
             num_warmup=N_WARMUP,
             num_samples=N_SAMPLE,
@@ -176,7 +122,7 @@ def compare(key: jax.Array) -> dict:
             run_nuts,
             logdensity_fn=posterior_logdensity_nuts,
             rng_key=nuts_key,
-            init_parameters=TRUE_PARAMS,
+            init_parameters=params,
             num_warmup=N_WARMUP,
             num_samples=N_SAMPLE,
             initial_step_size=INIT_STEPSIZE,
@@ -203,12 +149,22 @@ def compare(key: jax.Array) -> dict:
     }
 
 
+def generate_random_params(key, params_in, sd):
+    out = OrderedDict()
+    for k, v in params_in.items():
+        key_iter, key = jax.random.split(key)
+        out[k] = v + jax.random.normal(key_iter, v.shape) * sd
+    return out
+
+
 def run_comparison(n_test: int):
     key = jax.random.key(SEED)
     keys = jax.random.split(key, n_test)
     results = []
     for i, keyi in enumerate(keys):
-        result = compare(keyi)
+        compare_key, param_key = jax.random.split(keyi)
+        params = generate_random_params(param_key, TRUE_PARAMS, PARAM_SD)
+        result = compare_single(compare_key, params)
         result["rep"] = i
         results.append(result)
     return pl.from_records(results)

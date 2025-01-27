@@ -1,10 +1,11 @@
-"""Provides utility function `run_grapenuts`."""
+"""Provides utility functions run_grapenuts, get_idata and time_run."""
 
 import time
 from typing import Callable, TypedDict, Unpack
 
 import arviz as az
 import jax
+import numpy as np
 from blackjax import nuts
 from blackjax import window_adaptation as nuts_window_adaptation
 from blackjax.types import ArrayTree
@@ -118,7 +119,8 @@ def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
     return idata
 
 
-def time_run(run_fn, test_var: str | None = None):
+def time_run(run_fn):
+    """Time run_fn and check how many effective samples it generates."""
     _ = run_fn()  # dummy run for jit compiling
     start = time.time()
     out = run_fn()
@@ -127,9 +129,5 @@ def time_run(run_fn, test_var: str | None = None):
     idata = get_idata(*out)
     runtime = end - start
     ess = az.ess(idata.posterior)  # type: ignore
-    if test_var is None:
-        k = next(iter(ess))
-        neff = ess[k].mean()
-    else:
-        neff = ess[test_var].mean()
+    neff = np.sum([ess[v].values.sum() for v in ess.data_vars]).item()
     return {"time": runtime, "neff": neff}
