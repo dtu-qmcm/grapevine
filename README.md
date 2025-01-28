@@ -84,3 +84,22 @@ samples, info = run_grapenuts(
 jnp.quantile(samples.position, jnp.array([0.01, 0.5, 0.99]))
 # Array([-1.26712677,  0.12950684,  0.93903677], dtype=float64)
 ```
+
+# How to run the benchmarks
+
+1. Install [uv](https://docs.astral.sh/uv/)
+2. Run these commands
+
+```sh
+uv run benchmarks/methionine.py
+uv run benchmarks/linear.py
+uv run benchmarks/rosenbrock.py
+uv run benchmarks/trajectory.py
+uv run benchmarks/analyse_results.py
+```
+
+Alternatively, run this convenient shell script:
+
+```sh
+bash run_all_benchmarks.sh
+```
