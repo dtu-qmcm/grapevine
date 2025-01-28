@@ -133,8 +133,8 @@ def compare_single(key: jax.Array, params) -> dict:
         )
     )
     # results
-    result_gn = time_run(run_fn_gn, test_var="log_km")
-    result_nuts = time_run(run_fn_nuts, test_var="log_km")
+    result_gn = time_run(run_fn_gn)
+    result_nuts = time_run(run_fn_nuts)
     perf_gn = result_gn["neff"] / result_gn["time"]
     perf_nuts = result_nuts["neff"] / result_nuts["time"]
     perf_ratio = perf_gn / perf_nuts
