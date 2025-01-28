@@ -1,6 +1,6 @@
 [project]
 name = "grapevine-mcmc"
-version = "0.1.0"
+version = "0.2.0"
 description = "Faster Hamiltonian trajectories for problems with guesses, using Blackjax"
 authors = [
     {name = "Teddy Groves", email = "tedgro@dtu.dk"},
