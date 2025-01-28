@@ -7,8 +7,9 @@ import numpy as np
 import polars as pl
 
 HERE = Path(__file__).parent
+CSV_FILE_METHIONINE = HERE / "methionine.csv"
 CSV_FILE_ROSENBROCK = HERE / "rosenbrock.csv"
-CSV_FILE_LINEAR = HERE / "linear_pathway.csv"
+CSV_FILE_LINEAR = HERE / "linear.csv"
 CSV_FILE_TRAJECTORY = HERE / "trajectory.csv"
 
 
@@ -169,12 +170,15 @@ def trajectory_fig(result: pl.DataFrame):
 
 def main():
     matplotlib.rcParams["savefig.dpi"] = 300
-    df_rb = pl.read_csv(CSV_FILE_ROSENBROCK)
-    df_linear = pl.read_csv(CSV_FILE_LINEAR)
+    df_methionine = pl.read_csv(CSV_FILE_METHIONINE).with_columns(
+        model=pl.lit("Methionine"), dim=0
+    )
+    df_rb = pl.read_csv(CSV_FILE_ROSENBROCK).with_columns(model=pl.lit("Rosenbrock"))
+    df_linear = pl.read_csv(CSV_FILE_LINEAR).with_columns(
+        model=pl.lit("Small enzyme network"), dim=0
+    )
     df_trajectory = pl.read_csv(CSV_FILE_TRAJECTORY)
-    df_rb = df_rb.with_columns(model=pl.lit("Rosenbrock"))
-    df_linear = df_linear.with_columns(model=pl.lit("Small enzyme network"), dim=0)
-    df_performance = pl.concat([df_rb, df_linear], how="align")
+    df_performance = pl.concat([df_methionine, df_rb, df_linear], how="align")
 
     f, _ = performance_fig(df_performance)
     f.savefig(HERE / "performance.png", bbox_inches="tight")
