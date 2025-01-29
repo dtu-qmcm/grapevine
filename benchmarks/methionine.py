@@ -34,11 +34,11 @@ jax.config.update("jax_enable_x64", True)
 SEED = 1234
 PARAM_SD = 0.01
 HERE = Path(__file__).parent
-CSV_OUTPUT_FILE = HERE / "methionine_pathway.csv"
+CSV_OUTPUT_FILE = HERE / "methionine.csv"
 DEFAULT_GUESS = jnp.full((5,), 0.01)
-N_WARMUP = 5
-N_SAMPLE = 5
-N_TEST = 2
+N_WARMUP = 200
+N_SAMPLE = 100
+N_TEST = 6
 INIT_STEPSIZE = 0.0001
 MAX_TREEDEPTH = 10
 TARGET_ACCEPT = 0.95
@@ -225,12 +225,12 @@ def run_comparison(n_test: int):
     keys = jax.random.split(key, n_test)
     results = []
     for i, keyi in enumerate(keys):
+        print(f"Starting methionine rep {i}...")
         compare_key, param_key = jax.random.split(keyi)
         params = generate_random_params(param_key, TRUE_PARAMS, PARAM_SD)
         result = compare_single(compare_key, params)
         result["rep"] = i
         results.append(result)
-        print(results)
     return pl.from_records(results)
 
 

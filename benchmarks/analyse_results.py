@@ -1,10 +1,12 @@
 from pathlib import Path
-from matplotlib import pyplot as plt
-from matplotlib.legend_handler import HandlerPatch
-import matplotlib.patches as mpatches
+
 import matplotlib
+import matplotlib.patches as mpatches
 import numpy as np
 import polars as pl
+from matplotlib import pyplot as plt
+from matplotlib import ticker
+from matplotlib.legend_handler import HandlerPatch
 
 HERE = Path(__file__).parent
 CSV_FILE_METHIONINE = HERE / "methionine.csv"
@@ -77,26 +79,35 @@ def mm_fig(results_df: pl.DataFrame):
 
 
 def performance_fig(results: pl.DataFrame):
-    f, ax = plt.subplots(figsize=[8, 5])
-    ax.set_ylim(ymin=0.0, ymax=3.0)
+    f, ax = plt.subplots(figsize=[5, 8])
 
-    models = results.group_by(["dim"]).agg(pl.col("model").first()).sort("dim")
-    model_names = [models["model"].to_list()[0]] + [
-        f"{m} dim {d}" for d, m in models.iter_rows() if m == "Rosenbrock"
+    models = (
+        results[["model", "dim"]]
+        .group_by(["model", "dim"])
+        .first()
+        .sort(["dim", "model"])
+    )
+    model_names = [
+        f"{m} dim {d}" if m == "Rosenbrock" else m for m, d in models.iter_rows()
     ]
     models = models.with_columns(
-        xtick_loc=np.linspace(*ax.get_xlim(), len(model_names))  # type: ignore
+        ytick_loc=np.linspace(*ax.get_ylim(), len(model_names))  # type: ignore
     )
     results = results.join(models, on=["model", "dim"])
-    ax.scatter(results["xtick_loc"], results["perf_ratio"])
-    ax.axhline(1.0, linestyle="--", color="black", label="y=1")
-    ax.text(0.1, 1.05, "↑ grapeNUTS did better")
-    ax.text(0.1, 0.95, "↓ NUTS did better", verticalalignment="top")
-    ax.set_xticks(models["xtick_loc"], model_names, rotation=90)
-    ax.set(
-        xlabel="Problem",
-        ylabel="Performance ratio grapeNUTS:NUTS",
+    ax.scatter(
+        results["perf_ratio"],
+        results["ytick_loc"],
+        color="black",
+        marker="|",
     )
+    # ax.axvline(1.0, linestyle="--", color="gray")
+    ax.grid(visible=True, which="major", axis="x")
+    ax.set_yticks(models["ytick_loc"], model_names)
+    ax.set(
+        xlabel="Performance ratio grapeNUTS:NUTS",
+    )
+    ax.semilogx()
+    ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
     return f, ax
 
 
@@ -171,20 +182,20 @@ def trajectory_fig(result: pl.DataFrame):
 def main():
     matplotlib.rcParams["savefig.dpi"] = 300
     df_methionine = pl.read_csv(CSV_FILE_METHIONINE).with_columns(
-        model=pl.lit("Methionine"), dim=0
+        model=pl.lit("Methionine cycle"), dim=0
     )
     df_rb = pl.read_csv(CSV_FILE_ROSENBROCK).with_columns(model=pl.lit("Rosenbrock"))
     df_linear = pl.read_csv(CSV_FILE_LINEAR).with_columns(
-        model=pl.lit("Small enzyme network"), dim=0
+        model=pl.lit("Toy reaction network"), dim=0
     )
     df_trajectory = pl.read_csv(CSV_FILE_TRAJECTORY)
-    df_performance = pl.concat([df_methionine, df_rb, df_linear], how="align")
+    df_performance = pl.concat([df_linear, df_methionine, df_rb], how="align")
 
     f, _ = performance_fig(df_performance)
-    f.savefig(HERE / "performance.png", bbox_inches="tight")
+    f.savefig(HERE / "performance.png", bbox_inches="tight", dpi=300)
 
     f, _ = trajectory_fig(df_trajectory)
-    f.savefig(HERE / "trajectory.png", bbox_inches="tight")
+    f.savefig(HERE / "trajectory.png", bbox_inches="tight", dpi=300)
 
 
 if __name__ == "__main__":

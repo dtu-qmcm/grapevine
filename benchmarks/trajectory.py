@@ -23,7 +23,7 @@ from grapevine.integrator import (
     GrapevineIntegratorState,
 )
 from grapevine import run_grapenuts
-from grapevine.example_functions import rosenbrock2d
+from grapevine.example_functions import rosenbrock2dmult
 
 SEED = 1234
 N_WARMUP = 1000
@@ -56,7 +56,7 @@ def camel(x: jax.Array, args: jax.Array) -> Scalar:
 
 def posterior_logdensity(params, guess):
     sol = optx.minimise(
-        rosenbrock2d,
+        rosenbrock2dmult,
         solver,
         guess,
         args=params,
@@ -118,14 +118,14 @@ def test_trajectory(initial_position):
     steps = []
     for state in states:
         sol_gn = optx.minimise(
-            rosenbrock2d,
+            rosenbrock2dmult,
             solver,
             guess,
             args=state.position,
             max_steps=int(1e6),
         )
         sol_nuts = optx.minimise(
-            rosenbrock2d,
+            rosenbrock2dmult,
             solver,
             DEFAULT_GUESS,
             args=state.position,
