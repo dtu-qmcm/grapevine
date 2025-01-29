@@ -2,9 +2,6 @@
 name = "grapevine-mcmc"
 version = "0.2.0"
 description = "Faster Hamiltonian trajectories for problems with guesses, using Blackjax"
-authors = [
-    {name = "Teddy Groves", email = "tedgro@dtu.dk"},
-]
 dependencies = [
     "blackjax>=1.2.4",
     "arviz>=0.20.0",
