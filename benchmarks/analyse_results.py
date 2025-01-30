@@ -166,16 +166,13 @@ def trajectory_fig(result: pl.DataFrame):
     )
     axes[1].legend(frameon=False)
     axes[0].set(
-        title="Trajectory through solution space",
         xlabel="Solution component 1",
         ylabel="Solution component 2",
     )
     axes[1].set(
-        title="Distribution of solver costs",
         xlabel="Number of Newton steps\n(fewer is better)",
         ylabel="Frequency",
     )
-    f.suptitle("Grapevine vs a default guess on a single HMC trajectory")
     return f, axes
 
 
