@@ -22,6 +22,7 @@ class GrapeNUTSState(NamedTuple):
     logdensity: float
     logdensity_grad: ArrayTree
     guess: ArrayTree
+    n_newton_steps: int
 
 
 def init(
@@ -33,7 +34,7 @@ def init(
     (logdensity, _), logdensity_grad = jax.value_and_grad(logdensity_fn, has_aux=True)(
         position, guess=default_guess
     )
-    return GrapeNUTSState(position, logdensity, logdensity_grad, default_guess)
+    return GrapeNUTSState(position, logdensity, logdensity_grad, default_guess, 0)
 
 
 def build_kernel(
@@ -73,7 +74,7 @@ def build_kernel(
             divergence_threshold,
         )
         key_momentum, key_integrator = jax.random.split(rng_key, 2)
-        position, logdensity, logdensity_grad, guess = state
+        position, logdensity, logdensity_grad, guess, _ = state
         momentum = metric.sample_momentum(key_momentum, position)
         integrator_state = GrapevineIntegratorState(
             position,
@@ -92,6 +93,7 @@ def build_kernel(
             proposal.logdensity,
             proposal.logdensity_grad,
             default_guess,
+            proposal.guess[-1],
         )
         return proposal, info
 

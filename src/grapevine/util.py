@@ -111,6 +111,7 @@ def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
         {
             "diverging": info.is_divergent,
             "energy": info.energy,
+            "n_newton_steps": samples.n_newton_steps,
         },
         group="sample_stats",
     )
@@ -130,4 +131,5 @@ def time_run(run_fn):
     runtime = end - start
     ess = az.ess(idata.posterior)  # type: ignore
     neff = np.sum([ess[v].values.sum() for v in ess.data_vars]).item()
-    return {"time": runtime, "neff": neff}
+    n_newton_steps = idata.sample_stats["n_newton_steps"].values.sum()
+    return {"time": runtime, "neff": neff, "n_newton_steps": n_newton_steps}

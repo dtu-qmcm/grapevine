@@ -16,6 +16,7 @@ The benchmark proceeds by repeatedly choosing some true parameter values at rand
 
 from collections import OrderedDict
 from functools import partial
+import operator
 from pathlib import Path
 
 import equinox as eqx
@@ -25,7 +26,7 @@ import optimistix as optx
 import polars as pl
 from jax.scipy.stats import norm
 
-from grapevine.example_functions import linear_pathway_steady_state
+from grapevine.example_functions import linear_pathway_steady_state as sv
 from grapevine.util import run_grapenuts, run_nuts, time_run
 
 # Use 64 bit floats
@@ -44,7 +45,7 @@ TRUE_PARAMS = OrderedDict(
     log_kf=jnp.array([1.0, -1.0]),
     log_conc_ext=jnp.array([1.0, 0.0]),
 )
-DEFAULT_GUESS = jnp.array([0.1, 0.1])
+DEFAULT_GUESS = (jnp.array([0.1, 0.1]), TRUE_PARAMS, 0)
 N_WARMUP = 2000
 N_SAMPLE = 1000
 INIT_STEPSIZE = 0.0001
@@ -55,14 +56,50 @@ N_TEST = 6
 solver = optx.Newton(rtol=1e-5, atol=1e-5)
 
 
-def joint_logdensity_grapenuts(params, obs, guess):
-    sol = optx.root_find(
-        linear_pathway_steady_state,
-        solver,
-        guess,
-        args=params,
-        max_steps=int(1e5),
+def get_dxdp(jacx, jacp):
+    u = -(jnp.linalg.inv(jacx))
+    return jax.tree.map(lambda leaf: u @ leaf, jacp)
+
+
+def smart_guess(guess, params):
+    old_steady, old_params, _ = guess
+    param_shift = jax.tree.map(lambda old, new: old - new, params, old_params)
+    jacx = jax.jacfwd(sv, argnums=0)(old_steady, old_params)
+    jacp = jax.jacfwd(sv, argnums=1)(old_steady, old_params)
+    dxdp = get_dxdp(jacx, jacp)
+    xshift = jax.tree.reduce(
+        operator.add,
+        jax.tree.map(
+            jnp.dot,
+            dxdp,
+            param_shift,
+            is_leaf=lambda x: x is None,
+        ),
+        is_leaf=lambda x: x is None,
     )
+    return old_steady + xshift
+
+
+def dumb_guess(guess, params):
+    return guess[0]
+
+
+def joint_logdensity_grapenuts(params, obs, guess):
+    is_default = guess[0][0] == 0.1
+    _, _, previous_steps = guess
+    guess = jax.lax.cond(is_default, dumb_guess, smart_guess, guess, params)
+
+    def solve(params):
+        sol = optx.root_find(
+            sv,
+            solver,
+            guess,
+            args=params,
+            max_steps=int(1e5),
+        )
+        return sol.value, sol.stats["num_steps"]
+
+    steady, steps_i = solve(params)
     log_km, log_vmax, log_keq, log_kf, log_conc_ext = params.values()
     log_prior = jnp.sum(
         norm.logpdf(log_km, loc=TRUE_PARAMS["log_km"], scale=0.1).sum()
@@ -72,19 +109,23 @@ def joint_logdensity_grapenuts(params, obs, guess):
         + norm.logpdf(log_conc_ext, loc=TRUE_PARAMS["log_conc_ext"], scale=0.1).sum()
     )
     log_likelihood = norm.logpdf(
-        jnp.log(obs), loc=jnp.log(sol.value), scale=jnp.full(obs.shape, ERROR_SD)
+        jnp.log(obs), loc=jnp.log(steady), scale=jnp.full(obs.shape, ERROR_SD)
     ).sum()
-    return log_prior + log_likelihood, sol.value
+    steps = previous_steps + steps_i
+    return log_prior + log_likelihood, (steady, params, steps)
 
 
-def joint_logdensity_nuts(params, obs):
-    ld, _ = joint_logdensity_grapenuts(params, obs, DEFAULT_GUESS)
-    return ld
+def joint_logdensity_nuts(params, obs, guess):
+    ld, (_, _, steps_i) = joint_logdensity_grapenuts(params, obs, DEFAULT_GUESS)
+    _, _, previous_steps = guess
+    steps = previous_steps + steps_i
+    return ld, (DEFAULT_GUESS[0], DEFAULT_GUESS[1], steps)
 
 
 def simulate(key, params, guess):
+    guess, _, _ = guess
     sol = optx.root_find(
-        linear_pathway_steady_state,
+        sv,
         solver,
         guess,
         args=params,
@@ -119,10 +160,11 @@ def compare_single(key: jax.Array, params) -> dict:
     )
     run_fn_nuts = eqx.filter_jit(
         partial(
-            run_nuts,
+            run_grapenuts,
             logdensity_fn=posterior_logdensity_nuts,
             rng_key=nuts_key,
             init_parameters=params,
+            default_guess=DEFAULT_GUESS,
             num_warmup=N_WARMUP,
             num_samples=N_SAMPLE,
             initial_step_size=INIT_STEPSIZE,
@@ -135,14 +177,14 @@ def compare_single(key: jax.Array, params) -> dict:
     # results
     result_gn = time_run(run_fn_gn)
     result_nuts = time_run(run_fn_nuts)
-    perf_gn = result_gn["neff"] / result_gn["time"]
-    perf_nuts = result_nuts["neff"] / result_nuts["time"]
+    perf_gn = result_gn["neff"] / result_gn["n_newton_steps"]
+    perf_nuts = result_nuts["neff"] / result_nuts["n_newton_steps"]
     perf_ratio = perf_gn / perf_nuts
     return {
         "neff_n": result_nuts["neff"],
         "neff_gn": result_gn["neff"],
-        "time_n": result_nuts["time"],
-        "time_gn": result_gn["time"],
+        "steps_n": result_nuts["n_newton_steps"],
+        "steps_gn": result_gn["n_newton_steps"],
         "perf_n": perf_nuts,
         "perf_gn": perf_gn,
         "perf_ratio": perf_ratio,

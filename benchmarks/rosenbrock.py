@@ -36,22 +36,30 @@ solver = optx.BFGS(rtol=1e-9, atol=1e-9)
 
 
 def joint_logdensity_grapenuts(params, obs, guess, true_params):
+    guess_previous, n_newton_steps_previous = guess
     theta = params["theta"]
-    sol = optx.minimise(rosenbrock, solver, guess, args=theta, max_steps=int(1e4))
+    sol = optx.minimise(
+        rosenbrock,
+        solver,
+        guess_previous,
+        args=theta,
+        max_steps=int(1e4),
+    )
     log_prior = norm.logpdf(theta, loc=true_params["theta"], scale=PRIOR_SD).sum()
 
     log_likelihood = norm.logpdf(obs, loc=sol.value, scale=ERROR_SD).sum()
-    return log_prior + log_likelihood, sol.value
+    steps = n_newton_steps_previous + sol.stats["num_steps"]
+    return log_prior + log_likelihood, (sol.value, steps)
 
 
-def joint_logdensity_nuts(params, obs, true_params, default_guess):
-    ld, _ = joint_logdensity_grapenuts(
+def joint_logdensity_nuts(params, obs, guess, true_params):
+    ld, (_, steps) = joint_logdensity_grapenuts(
         params,
         obs,
-        default_guess,
+        guess,
         true_params=true_params,
     )
-    return ld
+    return ld, (guess[0], steps)
 
 
 def simulate(
@@ -64,11 +72,26 @@ def simulate(
     )
 
 
+def compare_nuts_vs_grapenuts(nuts: dict, grapenuts: dict) -> dict:
+    perf_gn = grapenuts["neff"] / grapenuts["n_newton_steps"]
+    perf_nuts = nuts["neff"] / nuts["n_newton_steps"]
+    perf_ratio = perf_gn / perf_nuts
+    return {
+        "neff_n": nuts["neff"],
+        "neff_gn": grapenuts["neff"],
+        "steps_n": nuts["n_newton_steps"],
+        "steps_gn": grapenuts["n_newton_steps"],
+        "perf_n": perf_nuts,
+        "perf_gn": perf_gn,
+        "perf_ratio": perf_ratio,
+    }
+
+
 def run_single_comparison(key: jax.Array, true_params: dict, dim: int) -> dict:
     sim_key, grapenuts_key, nuts_key = jax.random.split(key, 3)
-    default_guess = jnp.full((dim,), 1.0)
+    default_guess = (jnp.full((dim,), 1.0), 0)
     # simulate
-    _, sim = simulate(sim_key, true_params, default_guess)
+    _, sim = simulate(sim_key, true_params, default_guess[0])
     # posteriors
     posterior_logdensity_gn = partial(
         joint_logdensity_grapenuts,
@@ -79,7 +102,6 @@ def run_single_comparison(key: jax.Array, true_params: dict, dim: int) -> dict:
         joint_logdensity_nuts,
         obs=sim,
         true_params=true_params,
-        default_guess=default_guess,
     )
     run_fn_gn = eqx.filter_jit(
         partial(
@@ -99,10 +121,11 @@ def run_single_comparison(key: jax.Array, true_params: dict, dim: int) -> dict:
     )
     run_fn_nuts = eqx.filter_jit(
         partial(
-            run_nuts,
+            run_grapenuts,
             logdensity_fn=posterior_logdensity_nuts,
             rng_key=nuts_key,
             init_parameters=true_params,
+            default_guess=default_guess,
             num_warmup=N_WARMUP,
             num_samples=N_SAMPLE,
             initial_step_size=INIT_STEPSIZE,
@@ -113,20 +136,9 @@ def run_single_comparison(key: jax.Array, true_params: dict, dim: int) -> dict:
         )
     )
     # results
-    result_gn = time_run(run_fn_gn)
+    result_grapenuts = time_run(run_fn_gn)
     result_nuts = time_run(run_fn_nuts)
-    perf_gn = result_gn["neff"] / result_gn["time"]
-    perf_nuts = result_nuts["neff"] / result_nuts["time"]
-    perf_ratio = perf_gn / perf_nuts
-    return {
-        "neff_n": result_nuts["neff"],
-        "neff_gn": result_gn["neff"],
-        "time_n": result_nuts["time"],
-        "time_gn": result_gn["time"],
-        "perf_n": perf_nuts,
-        "perf_gn": perf_gn,
-        "perf_ratio": perf_ratio,
-    }
+    return compare_nuts_vs_grapenuts(result_nuts, result_grapenuts)
 
 
 def run_comparison(dim: int, n_test: int, key: jax.Array):
@@ -155,7 +167,7 @@ def main():
             key=dim_key,
         )
         results_list.append(dim_results)
-        print(dim_results)
+        print(dim_results.select(pl.all().round(2)))
     results = pl.concat(results_list)
     print(f"Benchmark results saved to {CSV_OUTPUT_FILE}")
     print("Mean results:")
