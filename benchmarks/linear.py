@@ -46,6 +46,11 @@ TRUE_PARAMS = OrderedDict(
     log_conc_ext=jnp.array([1.0, 0.0]),
 )
 DEFAULT_GUESS = (jnp.array([0.1, 0.1]), TRUE_PARAMS, 0)
+DEFAULT_GUESS2 = (
+    jnp.array([0.4, 0.4]),
+    OrderedDict({k: v * 0.2 for k, v in TRUE_PARAMS.items()}),
+    0,
+)
 N_WARMUP = 2000
 N_SAMPLE = 1000
 INIT_STEPSIZE = 0.0001
@@ -56,38 +61,42 @@ N_TEST = 6
 solver = optx.Newton(rtol=1e-5, atol=1e-5)
 
 
-def get_dxdp(jacx, jacp):
+@jax.jit
+def smart_guess_no_jac(old, params):
+    old_x, old_p, _ = old
+    delta_p = jax.tree.map(lambda old, new: new - old, old_p, params)
+    _, jvpp = jax.jvp(lambda p: sv(old_x, p), (old_p,), (delta_p,))
+
+    def matvec(v):
+        "Compute Jx @ v for any vector v"
+        return jax.jvp(lambda x: sv(x, old_p), (old_x,), (v,))[1]
+
+    dx = -jax.scipy.sparse.linalg.cg(matvec, jvpp)[0]
+    return old_x + dx
+
+
+@jax.jit
+def smart_guess(old, params):
+    old_x, old_p, _ = old
+    delta_p = jax.tree.map(lambda old, new: new - old, old_p, params)
+    _, jvpp = jax.jvp(lambda p: sv(old_x, p), (old_p,), (delta_p,))
+    jacx = jax.jacfwd(sv, argnums=0)(old_x, old_p)
     u = -(jnp.linalg.inv(jacx))
-    return jax.tree.map(lambda leaf: u @ leaf, jacp)
-
-
-def smart_guess(guess, params):
-    old_steady, old_params, _ = guess
-    param_shift = jax.tree.map(lambda old, new: old - new, params, old_params)
-    jacx = jax.jacfwd(sv, argnums=0)(old_steady, old_params)
-    jacp = jax.jacfwd(sv, argnums=1)(old_steady, old_params)
-    dxdp = get_dxdp(jacx, jacp)
-    xshift = jax.tree.reduce(
-        operator.add,
-        jax.tree.map(
-            jnp.dot,
-            dxdp,
-            param_shift,
-            is_leaf=lambda x: x is None,
-        ),
-        is_leaf=lambda x: x is None,
-    )
-    return old_steady + xshift
+    return old_x + u @ jvpp
 
 
 def dumb_guess(guess, params):
     return guess[0]
 
 
-def joint_logdensity_grapenuts(params, obs, guess):
+def very_dumb_guess(guess, params):
+    return DEFAULT_GUESS[0]
+
+
+def joint_logdensity(params, obs, guess, gfunc):
     is_default = guess[0][0] == 0.1
     _, _, previous_steps = guess
-    guess = jax.lax.cond(is_default, dumb_guess, smart_guess, guess, params)
+    guess = jax.lax.cond(is_default, dumb_guess, gfunc, guess, params)
 
     def solve(params):
         sol = optx.root_find(
@@ -115,13 +124,6 @@ def joint_logdensity_grapenuts(params, obs, guess):
     return log_prior + log_likelihood, (steady, params, steps)
 
 
-def joint_logdensity_nuts(params, obs, guess):
-    ld, (_, _, steps_i) = joint_logdensity_grapenuts(params, obs, DEFAULT_GUESS)
-    _, _, previous_steps = guess
-    steps = previous_steps + steps_i
-    return ld, (DEFAULT_GUESS[0], DEFAULT_GUESS[1], steps)
-
-
 def simulate(key, params, guess):
     guess, _, _ = guess
     sol = optx.root_find(
@@ -140,54 +142,44 @@ def compare_single(key: jax.Array, params) -> dict:
     # simulate
     _, sim = simulate(sim_key, params, DEFAULT_GUESS)
     # posteriors
-    posterior_logdensity_gn = partial(joint_logdensity_grapenuts, obs=sim)
-    posterior_logdensity_nuts = partial(joint_logdensity_nuts, obs=sim)
-    run_fn_gn = eqx.filter_jit(
-        partial(
-            run_grapenuts,
-            logdensity_fn=posterior_logdensity_gn,
-            rng_key=grapenuts_key,
-            init_parameters=params,
-            default_guess=DEFAULT_GUESS,
-            num_warmup=N_WARMUP,
-            num_samples=N_SAMPLE,
-            initial_step_size=INIT_STEPSIZE,
-            max_num_doublings=MAX_TREEDEPTH,
-            is_mass_matrix_diagonal=False,
-            target_acceptance_rate=TARGET_ACCEPT,
-            progress_bar=False,
+    posterior_logdensity_funcs = (
+        partial(joint_logdensity, obs=sim, gfunc=gfunc)
+        for gfunc in (
+            very_dumb_guess,
+            dumb_guess,
+            smart_guess,
+            smart_guess_no_jac,
         )
     )
-    run_fn_nuts = eqx.filter_jit(
-        partial(
-            run_grapenuts,
-            logdensity_fn=posterior_logdensity_nuts,
-            rng_key=nuts_key,
-            init_parameters=params,
-            default_guess=DEFAULT_GUESS,
-            num_warmup=N_WARMUP,
-            num_samples=N_SAMPLE,
-            initial_step_size=INIT_STEPSIZE,
-            max_num_doublings=MAX_TREEDEPTH,
-            is_mass_matrix_diagonal=False,
-            target_acceptance_rate=TARGET_ACCEPT,
-            progress_bar=False,
+    run_fns = (
+        eqx.filter_jit(
+            partial(
+                run_grapenuts,
+                logdensity_fn=pld,
+                rng_key=grapenuts_key,
+                init_parameters=params,
+                default_guess=DEFAULT_GUESS,
+                num_warmup=N_WARMUP,
+                num_samples=N_SAMPLE,
+                initial_step_size=INIT_STEPSIZE,
+                max_num_doublings=MAX_TREEDEPTH,
+                is_mass_matrix_diagonal=False,
+                target_acceptance_rate=TARGET_ACCEPT,
+                progress_bar=False,
+            )
         )
+        for pld in posterior_logdensity_funcs
     )
     # results
-    result_gn = time_run(run_fn_gn)
-    result_nuts = time_run(run_fn_nuts)
-    perf_gn = result_gn["neff"] / result_gn["n_newton_steps"]
-    perf_nuts = result_nuts["neff"] / result_nuts["n_newton_steps"]
-    perf_ratio = perf_gn / perf_nuts
+    results = [time_run(run_fn) for run_fn in run_fns]
+    result_nuts = results[0]
+    perf = [result["neff"] / result["n_newton_steps"] for result in results]
+    _, pr_gn_basic, pr_gn_smart, pr_gn_nojac = [perf_i / perf[0] for perf_i in perf]
     return {
-        "neff_n": result_nuts["neff"],
-        "neff_gn": result_gn["neff"],
-        "steps_n": result_nuts["n_newton_steps"],
-        "steps_gn": result_gn["n_newton_steps"],
-        "perf_n": perf_nuts,
-        "perf_gn": perf_gn,
-        "perf_ratio": perf_ratio,
+        "neff_nuts": result_nuts["neff"],
+        "performance_ratio_gn_basic": pr_gn_basic,
+        "performance_ratio_gn_smart": pr_gn_smart,
+        "performance_ratio_gn_nojac": pr_gn_nojac,
     }
 
 
