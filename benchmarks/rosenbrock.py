@@ -1,178 +1,175 @@
 """Compare GrapeNUTS and NUTS performance."""
 
+from collections import OrderedDict
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from typing import Callable
 
-import equinox as eqx
 import jax
-import jax.numpy as jnp
 import optimistix as optx
 import polars as pl
+from jax import numpy as jnp
 from jax.scipy.stats import norm
 
-from grapevine import run_grapenuts
-from grapevine.example_functions import rosenbrock
-from grapevine.util import run_nuts, time_run
+from grapevine.benchmarking import run_benchmark, Rosenbrock
+from grapevine.heuristics import guess_implicit, guess_previous
 
 # Use 64 bit floats
 jax.config.update("jax_enable_x64", True)
 
 
 SEED = 1234
-ERROR_SD = 0.005
-PRIOR_SD = 0.3
-DIMS = (3, 4, 5, 6, 7)
-N_TESTS_PER_DIM = 6
+N_TESTS_PER_CASE = 6
 HERE = Path(__file__).parent
 CSV_OUTPUT_FILE = HERE / "rosenbrock.csv"
-N_WARMUP = 3000
-N_SAMPLE = 3000
-INIT_STEPSIZE = 0.001
-MAX_TREEDEPTH = 10
-TARGET_ACCEPT = 0.99
+
+RUN_GRAPENUTS_KWARGS = dict(
+    num_warmup=3000,
+    num_samples=3000,
+    initial_step_size=0.001,
+    max_num_doublings=10,
+    is_mass_matrix_diagonal=False,
+    target_acceptance_rate=0.99,
+    progress_bar=False,
+)
 
 
-solver = optx.BFGS(rtol=1e-9, atol=1e-9)
+@dataclass
+class Case:
+    name: str
+    f: Callable
+    max_steps: int
+    solver: optx.Newton
+    prior_sd: float
+    error_sd: float
+    default_guess_info: tuple
 
 
-def joint_logdensity_grapenuts(params, obs, guess, true_params):
-    guess_previous, n_newton_steps_previous = guess
-    theta = params["theta"]
-    sol = optx.minimise(
-        rosenbrock,
-        solver,
-        guess_previous,
-        args=theta,
-        max_steps=int(1e4),
+CASES = [
+    Case(
+        name="Rosenbrock3d",
+        f=Rosenbrock(n_dimensions=3),
+        max_steps=800,
+        solver=optx.Newton(rtol=1e-5, atol=1e-5),
+        error_sd=0.05,
+        prior_sd=0.3,
+        default_guess_info=(
+            jnp.full((3,), 1.0),
+            OrderedDict(theta=jnp.full((3,), 0.0)),
+            0,
+        ),
     )
-    log_prior = norm.logpdf(theta, loc=true_params["theta"], scale=PRIOR_SD).sum()
-
-    log_likelihood = norm.logpdf(obs, loc=sol.value, scale=ERROR_SD).sum()
-    steps = n_newton_steps_previous + sol.stats["num_steps"]
-    return log_prior + log_likelihood, (sol.value, steps)
+]
 
 
-def joint_logdensity_nuts(params, obs, guess, true_params):
-    ld, (_, steps) = joint_logdensity_grapenuts(
+def get_solve_func(f, solver, max_steps):
+    def f_parameterised(x, args):
+        x_plus_theta = x + args["theta"]
+        return f(x_plus_theta)
+
+    def solve_func(guess, theta):
+        sol = optx.root_find(
+            jax.grad(f_parameterised),
+            solver,
+            guess,
+            args=theta,
+            max_steps=max_steps,
+        )
+        return sol.value, jnp.array(sol.stats["num_steps"])
+
+    return solve_func
+
+
+def joint_logdensity(
+    params,
+    obs,
+    guess_info,
+    gfunc,
+    default_guess_info,
+    solve_func,
+    prior_sd,
+    error_sd,
+):
+    last_solution, _, previous_steps = guess_info
+    default_guess = default_guess_info[0]
+    use_default = jnp.isclose(last_solution, default_guess).all()
+    guess = jax.lax.cond(
+        use_default,
+        lambda g, p: default_guess_info[0],
+        gfunc,
+        guess_info,
         params,
-        obs,
-        guess,
-        true_params=true_params,
     )
-    return ld, (guess[0], steps)
+    solution, steps_here = solve_func(guess, params)
+    log_prior = norm.logpdf(
+        params["theta"], loc=jnp.zeros(default_guess.shape), scale=prior_sd
+    ).sum()
+    log_likelihood = norm.logpdf(obs, loc=solution, scale=error_sd).sum()
+    steps = previous_steps + steps_here
+    return log_prior + log_likelihood, (solution, params, steps)
 
 
-def simulate(
-    key: jax.Array, params: dict, guess: jax.Array
+def simulate_func(
+    key: jax.Array, params: dict, guess: jax.Array, error_sd, solve_func
 ) -> tuple[jax.Array, jax.Array]:
-    theta = params["theta"]
-    sol = optx.minimise(rosenbrock, solver, guess, args=theta)
-    return sol.value, jnp.exp(
-        jnp.log(sol.value) + jax.random.normal(key, shape=sol.value.shape) * ERROR_SD
-    )
-
-
-def compare_nuts_vs_grapenuts(nuts: dict, grapenuts: dict) -> dict:
-    perf_gn = grapenuts["neff"] / grapenuts["n_newton_steps"]
-    perf_nuts = nuts["neff"] / nuts["n_newton_steps"]
-    perf_ratio = perf_gn / perf_nuts
-    return {
-        "neff_n": nuts["neff"],
-        "neff_gn": grapenuts["neff"],
-        "steps_n": nuts["n_newton_steps"],
-        "steps_gn": grapenuts["n_newton_steps"],
-        "perf_n": perf_nuts,
-        "perf_gn": perf_gn,
-        "perf_ratio": perf_ratio,
-    }
-
-
-def run_single_comparison(key: jax.Array, true_params: dict, dim: int) -> dict:
-    sim_key, grapenuts_key, nuts_key = jax.random.split(key, 3)
-    default_guess = (jnp.full((dim,), 1.0), 0)
-    # simulate
-    _, sim = simulate(sim_key, true_params, default_guess[0])
-    # posteriors
-    posterior_logdensity_gn = partial(
-        joint_logdensity_grapenuts,
-        obs=sim,
-        true_params=true_params,
-    )
-    posterior_logdensity_nuts = partial(
-        joint_logdensity_nuts,
-        obs=sim,
-        true_params=true_params,
-    )
-    run_fn_gn = eqx.filter_jit(
-        partial(
-            run_grapenuts,
-            logdensity_fn=posterior_logdensity_gn,
-            rng_key=grapenuts_key,
-            init_parameters=true_params,
-            default_guess=default_guess,
-            num_warmup=N_WARMUP,
-            num_samples=N_SAMPLE,
-            initial_step_size=INIT_STEPSIZE,
-            max_num_doublings=MAX_TREEDEPTH,
-            is_mass_matrix_diagonal=True,
-            target_acceptance_rate=TARGET_ACCEPT,
-            progress_bar=False,
-        )
-    )
-    run_fn_nuts = eqx.filter_jit(
-        partial(
-            run_grapenuts,
-            logdensity_fn=posterior_logdensity_nuts,
-            rng_key=nuts_key,
-            init_parameters=true_params,
-            default_guess=default_guess,
-            num_warmup=N_WARMUP,
-            num_samples=N_SAMPLE,
-            initial_step_size=INIT_STEPSIZE,
-            max_num_doublings=MAX_TREEDEPTH,
-            is_mass_matrix_diagonal=True,
-            target_acceptance_rate=TARGET_ACCEPT,
-            progress_bar=False,
-        )
-    )
-    # results
-    result_grapenuts = time_run(run_fn_gn)
-    result_nuts = time_run(run_fn_nuts)
-    return compare_nuts_vs_grapenuts(result_nuts, result_grapenuts)
-
-
-def run_comparison(dim: int, n_test: int, key: jax.Array):
-    results = []
-    keys = jax.random.split(key, n_test)
-    for i, keyi in enumerate(keys):
-        rng_key, compare_key = jax.random.split(keyi)
-        true_theta = jax.random.normal(key=rng_key, shape=(dim,)) * PRIOR_SD
-        true_params = {"theta": true_theta}
-        result = run_single_comparison(compare_key, true_params, dim)
-        result["rep"] = i
-        result["dim"] = dim
-        results.append(result)
-    return pl.from_records(results)
+    sol, _ = solve_func(guess, params)
+    return sol, sol + jax.random.normal(key, shape=sol.shape) * error_sd
 
 
 def main():
     results_list = []
-    key = jax.random.key(SEED)
-    dim_keys = jax.random.split(key, len(DIMS))
-    for dim, dim_key in zip(DIMS, dim_keys):
-        print(f"Benchmarking Rosenbrock function with size {dim}...")
-        dim_results = run_comparison(
-            dim=dim,
-            n_test=N_TESTS_PER_DIM,
-            key=dim_key,
+    for case in CASES:
+        print(f"Benchmarking {case.name}...")
+        solve = get_solve_func(
+            f=case.f,
+            solver=case.solver,
+            max_steps=case.max_steps,
         )
-        results_list.append(dim_results)
-        print(dim_results.select(pl.all().round(2)))
+        simulate = partial(
+            simulate_func, solve_func=solve, error_sd=case.error_sd
+        )
+
+        @jax.jit
+        def guess_static(guess_info, p):
+            return case.default_guess_info[0]
+
+        jlds = {
+            gfunc.__name__: partial(
+                joint_logdensity,
+                solve_func=solve,
+                prior_sd=case.prior_sd,
+                error_sd=case.error_sd,
+                gfunc=gfunc,
+                default_guess_info=case.default_guess_info,
+            )
+            for gfunc in (guess_static, guess_previous)
+        }
+        case_results = run_benchmark(
+            random_seed=SEED,
+            joint_logdensity_funcs=jlds,
+            baseline_params=case.default_guess_info[1],
+            param_sd=case.prior_sd,
+            n_test=N_TESTS_PER_CASE,
+            run_grapenuts_kwargs=RUN_GRAPENUTS_KWARGS,
+            sim_func=simulate,
+            default_guess_info=case.default_guess_info,
+        )
+        case_results = case_results.with_columns(case=pl.lit(case.name))
+        results_list.append(case_results)
+        print("Runtimes:")
+        print(case_results.pivot("heuristic", index="rep", values="time"))
+        print("Effective sample sizes:")
+        print(case_results.pivot("heuristic", index="rep", values="neff"))
+        print("Newton steps:")
+        print(
+            case_results.pivot(
+                "heuristic", index="rep", values="n_newton_steps"
+            )
+        )
     results = pl.concat(results_list)
     print(f"Benchmark results saved to {CSV_OUTPUT_FILE}")
-    print("Mean results:")
     results.write_csv(CSV_OUTPUT_FILE)
-    print(results.group_by(["dim"]).mean().sort(["dim", "perf_ratio"]))
 
 
 if __name__ == "__main__":

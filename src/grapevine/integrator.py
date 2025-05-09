@@ -15,7 +15,7 @@ class GrapevineIntegratorState(NamedTuple):
     momentum: ArrayLikeTree
     logdensity: float
     logdensity_grad: ArrayTree
-    guess: ArrayTree
+    guess_info: ArrayTree
 
 
 def grapevine_euclidean_position_update_fn(logdensity_fn: Callable):
@@ -26,7 +26,7 @@ def grapevine_euclidean_position_update_fn(logdensity_fn: Callable):
         kinetic_grad: ArrayTree,
         step_size: float,
         coef: float,
-        guess: ArrayTree,
+        guess_info: ArrayTree,
     ):
         new_position = jax.tree_util.tree_map(
             lambda x, grad: x + step_size * coef * grad,
@@ -34,11 +34,11 @@ def grapevine_euclidean_position_update_fn(logdensity_fn: Callable):
             kinetic_grad,
         )
         (
-            (logdensity, new_guess),
+            (logdensity, new_guess_info),
             logdensity_grad,
-        ) = logdensity_and_grad_fn(new_position, guess=guess)
-        del guess
-        return new_position, logdensity, logdensity_grad, new_guess
+        ) = logdensity_and_grad_fn(new_position, guess_info=guess_info)
+        del guess_info
+        return new_position, logdensity, logdensity_grad, new_guess_info
 
     return update
 
@@ -70,11 +70,11 @@ def grapevine_generalized_two_stage_integrator(
     format_output_fn: Callable = lambda x: x,
 ):
     def one_step(state: GrapevineIntegratorState, step_size: float):
-        position, momentum, _, logdensity_grad, guess = state
+        position, momentum, _, logdensity_grad, guess_info = state
         # auxiliary infomation generated during integration for diagnostics.
         # It is updated by the operator1 and operator2 at each call.
         momentum_update_info = None
-        position_update_info = guess
+        position_update_info = guess_info
         for i, coef in enumerate(coefficients[:-1]):
             if i % 2 == 0:
                 momentum, kinetic_grad, momentum_update_info = operator1(
@@ -96,7 +96,7 @@ def grapevine_generalized_two_stage_integrator(
                     kinetic_grad,
                     step_size,
                     coef,
-                    guess=position_update_info,
+                    guess_info=position_update_info,
                 )
         # Separate the last steps to short circuit the computation of the
         # kinetic_grad.
@@ -125,7 +125,9 @@ def generate_grapevine_euclidean_integrator(coefficients):
     def euclidean_integrator(
         logdensity_fn: Callable, kinetic_energy_fn: KineticEnergy
     ) -> Callable:
-        position_update_fn = grapevine_euclidean_position_update_fn(logdensity_fn)
+        position_update_fn = grapevine_euclidean_position_update_fn(
+            logdensity_fn
+        )
         momentum_update_fn = euclidean_momentum_update_fn(kinetic_energy_fn)
         one_step = grapevine_generalized_two_stage_integrator(
             momentum_update_fn,

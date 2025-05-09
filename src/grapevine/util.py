@@ -1,13 +1,9 @@
 """Provides utility functions run_grapenuts, get_idata and time_run."""
 
-import time
 from typing import Callable, TypedDict, Unpack
 
 import arviz as az
 import jax
-import numpy as np
-from blackjax import nuts
-from blackjax import window_adaptation as nuts_window_adaptation
 from blackjax.types import ArrayTree
 from blackjax.util import run_inference_algorithm
 from jax import numpy as jnp
@@ -31,15 +27,15 @@ def run_grapenuts(
     init_parameters: ArrayTree,
     num_warmup: int,
     num_samples: int,
-    default_guess: ArrayTree,
+    default_guess_info: ArrayTree,
     progress_bar: bool = True,
     **adapt_kwargs: Unpack[AdaptationKwargs],
 ):
-    """Run the default NUTS algorithm with blackjax."""
+    """Run grapenuts."""
     warmup = grapenuts_window_adaptation(
         grapenuts_sampler,
         logdensity_fn,
-        default_guess=default_guess,
+        default_guess_info=default_guess_info,
         progress_bar=progress_bar,
         integrator=grapevine_velocity_verlet,
         **adapt_kwargs,
@@ -53,7 +49,7 @@ def run_grapenuts(
     rng_key, sample_key = jax.random.split(rng_key)
     kernel = grapenuts_sampler(
         logdensity_fn,
-        default_guess=default_guess,
+        default_guess_info=default_guess_info,
         **tuned_parameters,
     )
     _, (states, info) = run_inference_algorithm(
@@ -66,43 +62,49 @@ def run_grapenuts(
     return states, info
 
 
-def run_nuts(
-    logdensity_fn: Callable,
-    rng_key: jax.Array,
-    init_parameters: ArrayTree,
-    num_warmup: int,
-    num_samples: int,
-    progress_bar: bool = True,
-    **adapt_kwargs: Unpack[AdaptationKwargs],
-):
-    """Run the default NUTS algorithm with blackjax."""
-    warmup = nuts_window_adaptation(
-        nuts,
-        logdensity_fn,
-        progress_bar=progress_bar,
-        **adapt_kwargs,
-    )
-    warmup_key, sample_key = jax.random.split(rng_key, 2)
-    (initial_state, tuned_parameters), _ = warmup.run(
-        warmup_key,
-        init_parameters,
-        num_steps=num_warmup,  #  type: ignore
-    )
-    kernel = nuts(logdensity_fn, **tuned_parameters)
-    (_, out) = run_inference_algorithm(
-        sample_key,
-        kernel,
-        num_samples,
-        initial_state,
-    )
-    return out
+# def run_nuts(
+#     logdensity_fn: Callable,
+#     rng_key: jax.Array,
+#     init_parameters: ArrayTree,
+#     num_warmup: int,
+#     num_samples: int,
+#     progress_bar: bool = True,
+#     **adapt_kwargs: Unpack[AdaptationKwargs],
+# ):
+#     """Run the default NUTS algorithm with blackjax."""
+#     warmup = nuts_window_adaptation(
+#         nuts,
+#         logdensity_fn,
+#         progress_bar=progress_bar,
+#         **adapt_kwargs,
+#     )
+#     warmup_key, sample_key = jax.random.split(rng_key, 2)
+#     (initial_state, tuned_parameters), _ = warmup.run(
+#         warmup_key,
+#         init_parameters,
+#         num_steps=num_warmup,  #  type: ignore
+#     )
+#     kernel = nuts(logdensity_fn, **tuned_parameters)
+#     (_, out) = run_inference_algorithm(
+#         sample_key,
+#         kernel,
+#         num_samples,
+#         initial_state,
+#     )
+#     return out
 
 
 def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
     """Get an arviz InferenceData from a grapeNUTS output."""
-    sample_dict = {k: jnp.expand_dims(v, 0) for k, v in samples.position.items()}
+    sample_dict = jax.tree.map(
+        lambda leaf: jnp.expand_dims(leaf, 0), samples.position
+    )
+    flat = {
+        "|".join(map(str, k)): v
+        for k, v in jax.tree.leaves_with_path(sample_dict)
+    }
     posterior = az.convert_to_inference_data(
-        sample_dict,
+        flat,
         group="posterior",
         coords=coords,
         dims=dims,
@@ -118,18 +120,3 @@ def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
     idata = az.concat(posterior, sample_stats)
     assert idata is not None, "idata should not be None!"
     return idata
-
-
-def time_run(run_fn):
-    """Time run_fn and check how many effective samples it generates."""
-    _ = run_fn()  # dummy run for jit compiling
-    start = time.time()
-    out = run_fn()
-    _ = next(iter(out[0].position.values())).block_until_ready()
-    end = time.time()
-    idata = get_idata(*out)
-    runtime = end - start
-    ess = az.ess(idata.posterior)  # type: ignore
-    neff = np.sum([ess[v].values.sum() for v in ess.data_vars]).item()
-    n_newton_steps = idata.sample_stats["n_newton_steps"].values.sum()
-    return {"time": runtime, "neff": neff, "n_newton_steps": n_newton_steps}

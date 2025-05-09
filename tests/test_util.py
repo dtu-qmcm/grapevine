@@ -6,7 +6,10 @@ from jax import numpy as jnp
 
 from grapevine.util import run_grapenuts
 
-from tests.simple_example_problem import posterior_logdensity, default_guess
+from grapevine.examples.simple_example_problem import (
+    posterior_logdensity,
+    default_guess,
+)
 
 SEED = 12345
 initial_position = jnp.array(0.0)
