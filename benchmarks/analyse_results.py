@@ -88,7 +88,8 @@ def performance_fig(results: pl.DataFrame):
         .sort(["dim", "model"])
     )
     model_names = [
-        f"{m} dim {d}" if m == "Rosenbrock" else m for m, d in models.iter_rows()
+        f"{m} dim {d}" if m == "Rosenbrock" else m
+        for m, d in models.iter_rows()
     ]
     models = models.with_columns(
         ytick_loc=np.linspace(*ax.get_ylim(), len(model_names))  # type: ignore
@@ -139,7 +140,9 @@ def trajectory_fig(result: pl.DataFrame):
         markersize=10,
         zorder=-1,
     )
-    for sx, sy, gx, gy in result[["sol_0", "sol_1", "guess_0", "guess_1"]].iter_rows():
+    for sx, sy, gx, gy in result[
+        ["sol_0", "sol_1", "guess_0", "guess_1"]
+    ].iter_rows():
         dx = sx - gx
         dy = sy - gy
         arrow = axes[0].arrow(
@@ -181,7 +184,9 @@ def main():
     df_methionine = pl.read_csv(CSV_FILE_METHIONINE).with_columns(
         model=pl.lit("Methionine cycle"), dim=0
     )
-    df_rb = pl.read_csv(CSV_FILE_ROSENBROCK).with_columns(model=pl.lit("Rosenbrock"))
+    df_rb = pl.read_csv(CSV_FILE_ROSENBROCK).with_columns(
+        model=pl.lit("Rosenbrock")
+    )
     df_linear = pl.read_csv(CSV_FILE_LINEAR).with_columns(
         model=pl.lit("Toy reaction network"), dim=0
     )

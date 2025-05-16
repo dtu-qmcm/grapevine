@@ -152,7 +152,9 @@ def test_trajectory(initial_position):
 def main():
     key = jax.random.key(SEED)
     mcmc, info = run_mcmc(rng_key=key)
-    traj_states, traj_steps = test_trajectory(initial_position=mcmc.position[50])
+    traj_states, traj_steps = test_trajectory(
+        initial_position=mcmc.position[50]
+    )
     traj_steps.write_csv("benchmarks/trajectory.csv")
     print(traj_steps)
     print(traj_steps.mean())
