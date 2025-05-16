@@ -12,10 +12,10 @@ from grapevine.integrator import (
     grapevine_velocity_verlet,
     GrapevineIntegratorState,
 )
-from tests.simple_example_problem import (
+from grapevine.examples.simple_example_problem import (
     posterior_logdensity,
     joint_logdensity,
-    default_guess,
+    default_guess_info,
     obs,
 )
 
@@ -27,22 +27,24 @@ metric = default_metric(inverse_mass_matrix)
 
 def get_initial_state():
     """Get the initial integrator state."""
-    (initial_logdensity, next_guess), logdensity_grad = jax.value_and_grad(
+    (initial_logdensity, next_guess_info), logdensity_grad = jax.value_and_grad(
         posterior_logdensity, has_aux=True
-    )(initial_position, guess=default_guess)
+    )(initial_position, guess_info=default_guess_info)
     return GrapevineIntegratorState(
         position=initial_position,
         momentum=initial_momentum,
         logdensity=initial_logdensity,
         logdensity_grad=logdensity_grad,
-        guess=next_guess,
+        guess_info=next_guess_info,
     )
 
 
 def get_final_state():
     """Get the final integrator state."""
     initial_state = get_initial_state()
-    step = grapevine_velocity_verlet(posterior_logdensity, metric.kinetic_energy)
+    step = grapevine_velocity_verlet(
+        posterior_logdensity, metric.kinetic_energy
+    )
     return jax.lax.fori_loop(
         0,
         50,
@@ -66,8 +68,12 @@ def test_conservation_of_energy():
     """Check that energy is conserved."""
     initial_state = get_initial_state()
     final_state = get_final_state()
-    initial_energy = -initial_state.logdensity + metric.kinetic_energy(initial_momentum)
-    final_energy = -final_state.logdensity + metric.kinetic_energy(final_state.momentum)
+    initial_energy = -initial_state.logdensity + metric.kinetic_energy(
+        initial_momentum
+    )
+    final_energy = -final_state.logdensity + metric.kinetic_energy(
+        final_state.momentum
+    )
     chex.assert_trees_all_close(initial_energy, final_energy, atol=1e-3)
 
 
@@ -75,7 +81,7 @@ def test_same_as_non_grapevine():
     """Check that grapevine gives result is same as plain velocity_verlet."""
 
     def joint_logdensity_vv(a, obs):
-        return joint_logdensity(a, obs, default_guess)[0]
+        return joint_logdensity(a, obs, default_guess_info)[0]
 
     final_state_gvvv = get_final_state()
     posterior_logdensity_vv = partial(joint_logdensity_vv, obs=obs)

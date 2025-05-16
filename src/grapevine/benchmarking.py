@@ -10,6 +10,10 @@ import jax
 import numpy as np
 import polars as pl
 from tqdm import tqdm
+from dataclasses import dataclass
+
+import jax.numpy as jnp
+
 
 # from grapevine.examples import linear_pathway
 from grapevine.util import run_grapenuts, get_idata
@@ -17,16 +21,22 @@ from grapevine.util import run_grapenuts, get_idata
 
 def time_run(run_fn):
     """Time run_fn and check how many effective samples it generates."""
-    _ = run_fn()  # dummy run for jit compiling
-    start = time.time()
-    out = run_fn()
-    _ = next(iter(out[0].position.values())).block_until_ready()
-    end = time.time()
-    idata = get_idata(*out)
-    runtime = end - start
-    ess = az.ess(idata.posterior)  # type: ignore
-    neff = np.sum([ess[v].values.sum() for v in ess.data_vars]).item()
-    n_newton_steps = idata.sample_stats["n_newton_steps"].values.sum()
+    try:
+        _ = run_fn()  # dummy run for jit compiling
+        start = time.time()
+        out = run_fn()
+        _ = next(iter(out[0].position.values())).block_until_ready()
+        end = time.time()
+        idata = get_idata(*out)
+        ess = az.ess(idata.posterior)  # type: ignore
+        neff = np.sum([ess[v].values.sum() for v in ess.data_vars]).item()
+        n_newton_steps = idata.sample_stats["n_newton_steps"].values.sum()
+        runtime = end - start
+    except Exception as err:
+        print(err)
+        neff = 0.0
+        n_newton_steps = 0
+        runtime = 0.0
     return {"time": runtime, "neff": neff, "n_newton_steps": n_newton_steps}
 
 
@@ -102,19 +112,6 @@ def run_benchmark(
         result = result.with_columns(rep=i)
         results.append(result)
     return pl.concat(results).sort("heuristic", "rep")
-
-
-"""JAX-compatible benchmark functions for optimization testing.
-
-Common benchmark functions implemented to be compatible with JAX.
-Each function is implemented as a class with a __call__ method.
-"""
-
-from dataclasses import dataclass
-from typing import Optional, Tuple
-
-import jax
-import jax.numpy as jnp
 
 
 @dataclass
@@ -194,25 +191,6 @@ class Beale:
 
 
 @dataclass
-class Himmelblau:
-    """Himmelblau function (2-dimensional).
-
-    f(x,y) = (x^2 + y - 11)^2 + (x + y^2 - 7)^2
-
-    Has 4 identical local minima.
-    """
-
-    n_dimensions: int = 2  # Fixed at 2D
-
-    def __call__(self, x):
-        if len(x) != 2:
-            raise ValueError(
-                f"Himmelblau function is 2D but got {len(x)} dimensions"
-            )
-        return (x[0] ** 2 + x[1] - 11) ** 2 + (x[0] + x[1] ** 2 - 7) ** 2
-
-
-@dataclass
 class Ackley:
     """Ackley function (n-dimensional).
 
@@ -279,59 +257,6 @@ class Levy:
         term3 = (w[-1] - 1) ** 2 * (1 + jnp.sin(2 * jnp.pi * w[-1]) ** 2)
 
         return term1 + term2 + term3
-
-
-@dataclass
-class Griewank:
-    """Griewank function (n-dimensional).
-
-    f(x) = 1 + sum_{i=1}^{n} [x_i^2/4000] - prod_{i=1}^{n} [cos(x_i/sqrt(i))]
-
-    Global minimum at (0, 0, ..., 0) with value 0.
-    """
-
-    n_dimensions: int
-
-    def __call__(self, x):
-        indices = jnp.arange(1, self.n_dimensions + 1)
-        sum_term = jnp.sum(x**2) / 4000
-        prod_term = jnp.prod(jnp.cos(x / jnp.sqrt(indices)))
-
-        return 1 + sum_term - prod_term
-
-
-@dataclass
-class Michalewicz:
-    """Michalewicz function (n-dimensional).
-
-    f(x) = -sum_{i=1}^{n} [sin(x_i) * sin^(2m)(i*x_i^2/π)]
-
-    Has n! local minima, very steep valleys.
-    """
-
-    n_dimensions: int
-    m: float = 10.0  # Steepness parameter
-
-    def __call__(self, x):
-        i = jnp.arange(1, self.n_dimensions + 1)
-        return -jnp.sum(jnp.sin(x) * jnp.sin(i * x**2 / jnp.pi) ** (2 * self.m))
-
-
-@dataclass
-class Schwefel:
-    """Schwefel function (n-dimensional).
-
-    f(x) = 418.9829n - sum_{i=1}^{n} [x_i * sin(sqrt(|x_i|))]
-
-    Global minimum at (420.9687, ..., 420.9687) with value 0.
-    """
-
-    n_dimensions: int
-
-    def __call__(self, x):
-        return 418.9829 * self.n_dimensions - jnp.sum(
-            x * jnp.sin(jnp.sqrt(jnp.abs(x)))
-        )
 
 
 @dataclass
