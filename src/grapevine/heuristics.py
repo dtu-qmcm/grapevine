@@ -1,6 +1,5 @@
 """Functions for guessing the next solution."""
 
-from functools import partial
 import jax
 from jax import numpy as jnp
 
