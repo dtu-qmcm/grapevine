@@ -26,17 +26,21 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = ["src/grapevine"]
 
+[tool.ruff]
+line-length = 80
+
 [dependency-groups]
 dev = [
     "chex>=0.1.88",
-    "optimistix>=0.0.10",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
 ]
 benchmarks = [
     "cmdstanpy>=1.2.5",
-    "diffrax>=0.6.2",
     "matplotlib>=3.10.0",
     "polars>=1.19.0",
-    "enzax@git+https://github.com/dtu-qmcm/enzax.git#main",
+    "enzax @ git+https://github.com/dtu-qmcm/enzax.git#main",
+    "tqdm>=4.67.1",
+    "diffrax>=0.7.0",
+    "optimistix>=0.0.10",
 ]

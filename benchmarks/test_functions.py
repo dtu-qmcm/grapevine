@@ -1,4 +1,14 @@
-"""Compare GrapeNUTS and NUTS performance."""
+"""Compare guessing heuristics on textbook optimisation problems.
+
+For each case we construct a version of the optimisation test function f that takes in two arguments: x = x1, ..., xk and theta = theta1, ..., thetak and returns gradx(f)(x + theta), i.e. the gradient with respect to x of f(x+theta). This parameterised function is then a suitable input for root-finding, with root argmin(f) + theta.
+
+Next, we simulate N_TESTS_PER_CASE values of theta from a normal distribution with mean 0 and standard deviation prior_sd. For each value of theta, we simulate a single observation of the parameterised function from a normal distribution with mean 0 and standard deviation error_sd. This simulates observations of the root of the parameterised function.
+
+We then perform MCMC inference on the simulated data, using the GrapeNUTS sampler and the logdensity function joint_logdensity. Each time this function and its gradients are evaluated, the sampler performs root-finding using optimistix's Newton solver.
+
+The heuristics (guess_static, guess previous and guess_implicit) are compared based on the total number of Newton steps spent on root-finding, for each of N_TESTS_PER_CASE MCMC runs per test function. Additional metrics including runtime and effective sample size of the MCMC chains are also saved.
+
+"""
 
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -13,11 +23,19 @@ from jax import numpy as jnp
 from jax.scipy.stats import norm
 
 from grapevine.benchmarking import (
+    Beale,
+    Easom,
+    Levy,
+    Rastrigin,
     StyblinskiTang,
     run_benchmark,
     Rosenbrock,
 )
-from grapevine.heuristics import guess_implicit, guess_previous
+from grapevine.heuristics import (
+    guess_implicit,
+    guess_previous,
+    guess_implicit_cg,
+)
 
 # Use 64 bit floats
 jax.config.update("jax_enable_x64", True)
@@ -51,6 +69,71 @@ class Case:
 
 
 CASES = [
+    Case(
+        name="Easom",
+        f=Easom(n_dimensions=2),
+        max_steps=int(1e5),
+        solver=optx.Newton(rtol=1e-8, atol=1e-8),
+        error_sd=0.05,
+        prior_sd=0.01,
+        default_guess_info=(
+            jnp.full((2,), jnp.pi),
+            OrderedDict(theta=jnp.full((2,), 0.0)),
+            0,
+        ),
+    ),
+    Case(
+        name="Levy3d",
+        f=Levy(n_dimensions=3),
+        max_steps=int(1e5),
+        solver=optx.Newton(rtol=1e-8, atol=1e-8),
+        error_sd=0.05,
+        prior_sd=0.1,
+        default_guess_info=(
+            jnp.full((3,), 1.0),
+            OrderedDict(theta=jnp.full((3,), 0.0)),
+            0,
+        ),
+    ),
+    Case(
+        name="Beale",
+        f=Beale(),
+        max_steps=int(1e5),
+        solver=optx.Newton(rtol=1e-8, atol=1e-8),
+        error_sd=0.05,
+        prior_sd=0.005,
+        default_guess_info=(
+            jnp.array([3.0, 0.5]),
+            OrderedDict(theta=jnp.full((2,), 0.0)),
+            0,
+        ),
+    ),
+    Case(
+        name="Rastrigin3d",
+        f=Rastrigin(n_dimensions=3),
+        max_steps=int(1e5),
+        solver=optx.Newton(rtol=1e-8, atol=1e-8),
+        error_sd=0.05,
+        prior_sd=0.01,
+        default_guess_info=(
+            jnp.full((3,), 0.0),
+            OrderedDict(theta=jnp.full((3,), 0.0)),
+            0,
+        ),
+    ),
+    Case(
+        name="Rosenbrock8d",
+        f=Rosenbrock(n_dimensions=8),
+        max_steps=int(1e5),
+        solver=optx.Newton(rtol=1e-8, atol=1e-8),
+        error_sd=0.05,
+        prior_sd=0.002,
+        default_guess_info=(
+            jnp.full((8,), 1.0),
+            OrderedDict(theta=jnp.full((8,), 0.0)),
+            0,
+        ),
+    ),
     Case(
         name="StyblinskiTang3d",
         f=StyblinskiTang(n_dimensions=3),
@@ -151,7 +234,7 @@ def simulate_func(
 def main():
     results_list = []
     for case in CASES:
-        print(f"Benchmarking {case.name}...")
+        print(f'Benchmarking case "{case.name}"...')
         solve = get_solve_func(
             f=case.f,
             solver=case.solver,
@@ -176,6 +259,9 @@ def main():
             )
             for gfunc in (
                 partial(guess_implicit, target_function=parameterise(case.f)),
+                partial(
+                    guess_implicit_cg, target_function=parameterise(case.f)
+                ),
                 guess_static,
                 guess_previous,
             )

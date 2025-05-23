@@ -13,8 +13,9 @@ from grapevine.integrator import grapevine_velocity_verlet
 
 
 def return_all_adapt_info(state, info, adaptation_state):
-    """Return fully populated AdaptationInfo.  Used for adaptation_info_fn
-    parameters of the adaptation algorithms.
+    """Return fully populated AdaptationInfo.
+
+    Used for adaptation_info_fn parameters of the adaptation algorithms.
     """
     return AdaptationInfo(state, info, adaptation_state)
 
@@ -22,7 +23,7 @@ def return_all_adapt_info(state, info, adaptation_state):
 def grapenuts_window_adaptation(
     algorithm,
     logdensity_fn: Callable,
-    default_guess: ArrayTree,
+    default_guess_info: ArrayTree,
     is_mass_matrix_diagonal: bool = True,
     initial_step_size: float = 1.0,
     target_acceptance_rate: float = 0.80,
@@ -31,7 +32,7 @@ def grapenuts_window_adaptation(
     integrator=grapevine_velocity_verlet,
     **extra_parameters,
 ) -> AdaptationAlgorithm:
-    mcmc_kernel = algorithm.build_kernel(default_guess, integrator)
+    mcmc_kernel = algorithm.build_kernel(default_guess_info, integrator)
 
     adapt_init, adapt_step, adapt_final = base(
         is_mass_matrix_diagonal,
@@ -67,7 +68,7 @@ def grapenuts_window_adaptation(
         position: ArrayLikeTree,
         num_steps: int = 1000,
     ):
-        init_state = algorithm.init(position, logdensity_fn, default_guess)
+        init_state = algorithm.init(position, logdensity_fn, default_guess_info)
         init_adaptation_state = adapt_init(position, initial_step_size)
 
         if progress_bar:

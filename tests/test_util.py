@@ -6,7 +6,10 @@ from jax import numpy as jnp
 
 from grapevine.util import run_grapenuts
 
-from tests.simple_example_problem import posterior_logdensity, default_guess
+from grapevine.examples.simple_example_problem import (
+    posterior_logdensity,
+    default_guess_info,
+)
 
 SEED = 12345
 initial_position = jnp.array(0.0)
@@ -21,7 +24,7 @@ def test_run_grapenuts():
         init_parameters=initial_position,
         num_warmup=10,
         num_samples=10,
-        default_guess=default_guess,
+        default_guess_info=default_guess_info,
         progress_bar=False,
         initial_step_size=0.01,
         max_num_doublings=4,

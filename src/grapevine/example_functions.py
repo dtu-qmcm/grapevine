@@ -3,32 +3,6 @@ from jax import numpy as jnp
 from jaxtyping import Scalar
 
 
-def rosenbrock(x: jax.Array, args: jax.Array) -> Scalar:
-    """A function for benchmarking minimisation algorithms.
-
-    For 2 < dim < 8 the solution is x + args = 1.
-
-    See <https://doi.org/10.1093/comjnl/3.3.175> and <https://doi.org/10.1162/evco.2009.17.3.437> for more.
-
-    Example usage:
-
-    ```python
-    from jax import numpy as jnp
-    import optimistix as optx
-    from grapevine.example_functions import rosenbckro
-
-    solver = optx.BFGS(rtol=1e-9, atol=1e-9)
-    guess = jnp.array([0.1, 0.2, 0.3])
-    theta = jnp.array([1.1, 1.2, 1.3])
-    sol = optx.minimise(rosenbrock, solver, guess, args=theta)
-    ```
-
-    """
-
-    xt = x + args
-    return (100.0 * (xt[1:] - xt[:-1] ** 2.0) ** 2.0 + (1 - xt[:-1]) ** 2.0).sum()
-
-
 def rosenbrock2dmult(x: jax.Array, args: jax.Array) -> Scalar:
     """2 dimensional version of the Rosenbrock funtion.
 

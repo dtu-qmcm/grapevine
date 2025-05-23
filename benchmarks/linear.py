@@ -14,168 +14,61 @@ The benchmark proceeds by repeatedly choosing some true parameter values at rand
 
 """
 
-from collections import OrderedDict
-from functools import partial
 from pathlib import Path
 
-import equinox as eqx
 import jax
-import jax.numpy as jnp
-import optimistix as optx
-import polars as pl
-from jax.scipy.stats import norm
 
-from grapevine.example_functions import linear_pathway_steady_state
-from grapevine.util import run_grapenuts, run_nuts, time_run
+from grapevine.examples import linear_pathway
+from grapevine.benchmarking import run_benchmark
 
 # Use 64 bit floats
 jax.config.update("jax_enable_x64", True)
 
 
 SEED = 1234
-ERROR_SD = 0.05
-PARAM_SD = 0.02
 HERE = Path(__file__).parent
 CSV_OUTPUT_FILE = HERE / "linear.csv"
-TRUE_PARAMS = OrderedDict(
-    log_km=jnp.array([2.0, 2.0]),
-    log_vmax=jnp.array(3.0),
-    log_keq=jnp.array([1.0, 1.0, 1.0]),
-    log_kf=jnp.array([1.0, -1.0]),
-    log_conc_ext=jnp.array([1.0, 0.0]),
-)
-DEFAULT_GUESS = jnp.array([0.1, 0.1])
-N_WARMUP = 2000
-N_SAMPLE = 1000
-INIT_STEPSIZE = 0.0001
-MAX_TREEDEPTH = 10
-TARGET_ACCEPT = 0.9
 N_TEST = 6
-
-solver = optx.Newton(rtol=1e-5, atol=1e-5)
-
-
-def joint_logdensity_grapenuts(params, obs, guess):
-    sol = optx.root_find(
-        linear_pathway_steady_state,
-        solver,
-        guess,
-        args=params,
-        max_steps=int(1e5),
-    )
-    log_km, log_vmax, log_keq, log_kf, log_conc_ext = params.values()
-    log_prior = jnp.sum(
-        norm.logpdf(log_km, loc=TRUE_PARAMS["log_km"], scale=0.1).sum()
-        + norm.logpdf(log_vmax, loc=TRUE_PARAMS["log_vmax"], scale=0.1).sum()
-        + norm.logpdf(log_keq, loc=TRUE_PARAMS["log_keq"], scale=0.1).sum()
-        + norm.logpdf(log_kf, loc=TRUE_PARAMS["log_kf"], scale=0.1).sum()
-        + norm.logpdf(log_conc_ext, loc=TRUE_PARAMS["log_conc_ext"], scale=0.1).sum()
-    )
-    log_likelihood = norm.logpdf(
-        jnp.log(obs), loc=jnp.log(sol.value), scale=jnp.full(obs.shape, ERROR_SD)
-    ).sum()
-    return log_prior + log_likelihood, sol.value
-
-
-def joint_logdensity_nuts(params, obs):
-    ld, _ = joint_logdensity_grapenuts(params, obs, DEFAULT_GUESS)
-    return ld
-
-
-def simulate(key, params, guess):
-    sol = optx.root_find(
-        linear_pathway_steady_state,
-        solver,
-        guess,
-        args=params,
-    )
-    return sol.value, jnp.exp(
-        jnp.log(sol.value) + jax.random.normal(key, shape=sol.value.shape) * ERROR_SD
-    )
-
-
-def compare_single(key: jax.Array, params) -> dict:
-    sim_key, grapenuts_key, nuts_key = jax.random.split(key, 3)
-    # simulate
-    _, sim = simulate(sim_key, params, DEFAULT_GUESS)
-    # posteriors
-    posterior_logdensity_gn = partial(joint_logdensity_grapenuts, obs=sim)
-    posterior_logdensity_nuts = partial(joint_logdensity_nuts, obs=sim)
-    run_fn_gn = eqx.filter_jit(
-        partial(
-            run_grapenuts,
-            logdensity_fn=posterior_logdensity_gn,
-            rng_key=grapenuts_key,
-            init_parameters=params,
-            default_guess=DEFAULT_GUESS,
-            num_warmup=N_WARMUP,
-            num_samples=N_SAMPLE,
-            initial_step_size=INIT_STEPSIZE,
-            max_num_doublings=MAX_TREEDEPTH,
-            is_mass_matrix_diagonal=False,
-            target_acceptance_rate=TARGET_ACCEPT,
-            progress_bar=False,
-        )
-    )
-    run_fn_nuts = eqx.filter_jit(
-        partial(
-            run_nuts,
-            logdensity_fn=posterior_logdensity_nuts,
-            rng_key=nuts_key,
-            init_parameters=params,
-            num_warmup=N_WARMUP,
-            num_samples=N_SAMPLE,
-            initial_step_size=INIT_STEPSIZE,
-            max_num_doublings=MAX_TREEDEPTH,
-            is_mass_matrix_diagonal=False,
-            target_acceptance_rate=TARGET_ACCEPT,
-            progress_bar=False,
-        )
-    )
-    # results
-    result_gn = time_run(run_fn_gn)
-    result_nuts = time_run(run_fn_nuts)
-    perf_gn = result_gn["neff"] / result_gn["time"]
-    perf_nuts = result_nuts["neff"] / result_nuts["time"]
-    perf_ratio = perf_gn / perf_nuts
-    return {
-        "neff_n": result_nuts["neff"],
-        "neff_gn": result_gn["neff"],
-        "time_n": result_nuts["time"],
-        "time_gn": result_gn["time"],
-        "perf_n": perf_nuts,
-        "perf_gn": perf_gn,
-        "perf_ratio": perf_ratio,
-    }
-
-
-def generate_random_params(key, params_in, sd):
-    out = OrderedDict()
-    for k, v in params_in.items():
-        key_iter, key = jax.random.split(key)
-        out[k] = v + jax.random.normal(key_iter, v.shape) * sd
-    return out
-
-
-def run_comparison(n_test: int):
-    key = jax.random.key(SEED)
-    keys = jax.random.split(key, n_test)
-    results = []
-    for i, keyi in enumerate(keys):
-        compare_key, param_key = jax.random.split(keyi)
-        params = generate_random_params(param_key, TRUE_PARAMS, PARAM_SD)
-        result = compare_single(compare_key, params)
-        result["rep"] = i
-        results.append(result)
-    return pl.from_records(results)
+RUN_GRAPENUTS_KWARGS = dict(
+    num_warmup=2000,
+    num_samples=1000,
+    initial_step_size=0.0001,
+    max_num_doublings=10,
+    is_mass_matrix_diagonal=False,
+    target_acceptance_rate=0.9,
+    progress_bar=False,
+)
+DEFAULT_GUESS_INFO = (
+    linear_pathway.DEFAULT_GUESS,
+    linear_pathway.TRUE_PARAMS,
+    0,
+)
 
 
 def main():
-    results = run_comparison(n_test=N_TEST)
+    results = run_benchmark(
+        random_seed=SEED,
+        joint_logdensity_funcs={
+            "guess_static": linear_pathway.joint_logdensity_guess_default,
+            "guess_previous": linear_pathway.joint_logdensity_guess_previous,
+            "guess_implicit": linear_pathway.joint_logdensity_guess_implicit,
+            "guess_implicit_cg": linear_pathway.joint_logdensity_guess_implicit_cg,
+        },
+        baseline_params=linear_pathway.TRUE_PARAMS,
+        param_sd=linear_pathway.PARAM_SD,
+        n_test=N_TEST,
+        run_grapenuts_kwargs=RUN_GRAPENUTS_KWARGS,
+        sim_func=linear_pathway.simulate,
+        default_guess_info=DEFAULT_GUESS_INFO,
+    )
     print(f"Benchmark results saved to {CSV_OUTPUT_FILE}")
     results.write_csv(CSV_OUTPUT_FILE)
-    print("Results:")
-    print(results)
+    print("Runtimes:")
+    print(results.pivot("heuristic", index="rep", values="time"))
+    print("Effective sample sizes:")
+    print(results.pivot("heuristic", index="rep", values="neff"))
+    print("Newton steps:")
+    print(results.pivot("heuristic", index="rep", values="n_newton_steps"))
 
 
 if __name__ == "__main__":

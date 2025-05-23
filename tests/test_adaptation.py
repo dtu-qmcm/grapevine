@@ -8,7 +8,10 @@ from grapevine.adaptation import grapenuts_window_adaptation
 from grapevine.grapenuts import grapenuts_sampler
 from grapevine.integrator import grapevine_velocity_verlet
 
-from tests.simple_example_problem import posterior_logdensity, default_guess
+from grapevine.examples.simple_example_problem import (
+    posterior_logdensity,
+    default_guess_info,
+)
 
 SEED = 12345
 INITIAL_PARAM_VALUE = jnp.array(0.3)
@@ -20,7 +23,7 @@ def test_window_adaptation():
     adaptation = grapenuts_window_adaptation(
         grapenuts_sampler,
         posterior_logdensity,
-        default_guess=default_guess,
+        default_guess_info=default_guess_info,
         progress_bar=False,
         integrator=grapevine_velocity_verlet,
     )
