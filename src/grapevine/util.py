@@ -62,38 +62,6 @@ def run_grapenuts(
     return states, info
 
 
-# def run_nuts(
-#     logdensity_fn: Callable,
-#     rng_key: jax.Array,
-#     init_parameters: ArrayTree,
-#     num_warmup: int,
-#     num_samples: int,
-#     progress_bar: bool = True,
-#     **adapt_kwargs: Unpack[AdaptationKwargs],
-# ):
-#     """Run the default NUTS algorithm with blackjax."""
-#     warmup = nuts_window_adaptation(
-#         nuts,
-#         logdensity_fn,
-#         progress_bar=progress_bar,
-#         **adapt_kwargs,
-#     )
-#     warmup_key, sample_key = jax.random.split(rng_key, 2)
-#     (initial_state, tuned_parameters), _ = warmup.run(
-#         warmup_key,
-#         init_parameters,
-#         num_steps=num_warmup,  #  type: ignore
-#     )
-#     kernel = nuts(logdensity_fn, **tuned_parameters)
-#     (_, out) = run_inference_algorithm(
-#         sample_key,
-#         kernel,
-#         num_samples,
-#         initial_state,
-#     )
-#     return out
-
-
 def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
     """Get an arviz InferenceData from a grapeNUTS output."""
     sample_dict = jax.tree.map(

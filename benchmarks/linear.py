@@ -49,10 +49,10 @@ def main():
     results = run_benchmark(
         random_seed=SEED,
         joint_logdensity_funcs={
-            "NUTS": linear_pathway.joint_logdensity_guess_default,
+            "guess_static": linear_pathway.joint_logdensity_guess_default,
             "guess_previous": linear_pathway.joint_logdensity_guess_previous,
-            "ift": linear_pathway.joint_logdensity_guess_implicit,
-            "ift_cg": linear_pathway.joint_logdensity_guess_implicit_cg,
+            "guess_implicit": linear_pathway.joint_logdensity_guess_implicit,
+            "guess_implicit_cg": linear_pathway.joint_logdensity_guess_implicit_cg,
         },
         baseline_params=linear_pathway.TRUE_PARAMS,
         param_sd=linear_pathway.PARAM_SD,

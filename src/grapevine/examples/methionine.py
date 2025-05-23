@@ -36,13 +36,14 @@ def get_default_guess(*args):
     return DEFAULT_GUESS
 
 
+@jax.jit
 def ode_solve(guess, params):
     term = diffrax.ODETerm(methionine.model)
     controller = diffrax.PIDController(
         pcoeff=0.1,
         icoeff=0.3,
-        rtol=1e-11,
-        atol=1e-11,
+        rtol=1e-9,
+        atol=1e-9,
     )
     cond_fn = diffrax.steady_state_event()
     event = diffrax.Event(cond_fn)

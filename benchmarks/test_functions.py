@@ -31,7 +31,11 @@ from grapevine.benchmarking import (
     run_benchmark,
     Rosenbrock,
 )
-from grapevine.heuristics import guess_implicit, guess_previous
+from grapevine.heuristics import (
+    guess_implicit,
+    guess_previous,
+    guess_implicit_cg,
+)
 
 # Use 64 bit floats
 jax.config.update("jax_enable_x64", True)
@@ -255,6 +259,9 @@ def main():
             )
             for gfunc in (
                 partial(guess_implicit, target_function=parameterise(case.f)),
+                partial(
+                    guess_implicit_cg, target_function=parameterise(case.f)
+                ),
                 guess_static,
                 guess_previous,
             )

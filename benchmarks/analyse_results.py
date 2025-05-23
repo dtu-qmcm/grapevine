@@ -5,7 +5,6 @@ import matplotlib.patches as mpatches
 import numpy as np
 import polars as pl
 from matplotlib import pyplot as plt
-from matplotlib import ticker
 from matplotlib.legend_handler import HandlerPatch
 
 HERE = Path(__file__).parent
@@ -13,6 +12,7 @@ CSV_FILE_METHIONINE = HERE / "methionine.csv"
 CSV_FILE_ROSENBROCK = HERE / "rosenbrock.csv"
 CSV_FILE_LINEAR = HERE / "linear.csv"
 CSV_FILE_TRAJECTORY = HERE / "trajectory.csv"
+CSV_FILE_TEST_FUNCTIONS = HERE / "test_functions.csv"
 
 
 class HandlerArrow(HandlerPatch):
@@ -79,36 +79,47 @@ def mm_fig(results_df: pl.DataFrame):
 
 
 def performance_fig(results: pl.DataFrame):
-    f, ax = plt.subplots(figsize=[5, 8])
-
-    models = (
-        results[["model", "dim"]]
-        .group_by(["model", "dim"])
-        .first()
-        .sort(["dim", "model"])
+    f, ax = plt.subplots(figsize=[8, 5])
+    cases = pl.DataFrame(
+        {
+            "case": results["case"].unique(maintain_order=True),
+            "x": np.linspace(*ax.get_xlim(), results["case"].n_unique()),
+        }
     )
-    model_names = [
-        f"{m} dim {d}" if m == "Rosenbrock" else m
-        for m, d in models.iter_rows()
-    ]
-    models = models.with_columns(
-        ytick_loc=np.linspace(*ax.get_ylim(), len(model_names))  # type: ignore
+    plot_df = (
+        results.join(cases, on="case")
+        .with_columns(
+            x_jitter=np.random.normal(scale=0.01, size=results.shape[0]),
+            steps_per_neff=pl.col("n_newton_steps") / pl.col("neff"),
+        )
+        # guess_implicit_cg should behave the same as guess_implicit
+        .filter(pl.col("heuristic") != "guess_implicit_cg")
     )
-    results = results.join(models, on=["model", "dim"])
-    ax.scatter(
-        results["perf_ratio"],
-        results["ytick_loc"],
-        color="black",
-        marker="|",
-    )
-    # ax.axvline(1.0, linestyle="--", color="gray")
-    ax.grid(visible=True, which="major", axis="x")
-    ax.set_yticks(models["ytick_loc"], model_names)
+    for (heuristic,), subdf in plot_df.group_by(
+        "heuristic", maintain_order=True
+    ):
+        sct = ax.scatter(
+            subdf["x"] + subdf["x_jitter"],
+            subdf["steps_per_neff"],
+            label=heuristic,
+            alpha=0.8,
+        )
+        fail = subdf.filter(pl.col("n_newton_steps") == 0)
+        ax.scatter(
+            fail["x"] + fail["x_jitter"],
+            fail["n_newton_steps"] + 0.1,
+            marker="x",
+            color=sct.get_facecolor(),
+        )
+    ax.legend(frameon=False, title="Heuristic")
+    ax.grid(visible=True, which="major", axis="y")
+    ax.set_xticks(cases["x"], list(cases["case"]), fontsize="x-small")
     ax.set(
-        xlabel="Performance ratio grapeNUTS:NUTS",
+        ylabel="Newton steps per effective sample",
+        xlabel="Test case",
     )
-    ax.semilogx()
-    ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax.semilogy()
+    # ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
     return f, ax
 
 
@@ -182,16 +193,18 @@ def trajectory_fig(result: pl.DataFrame):
 def main():
     matplotlib.rcParams["savefig.dpi"] = 300
     df_methionine = pl.read_csv(CSV_FILE_METHIONINE).with_columns(
-        model=pl.lit("Methionine cycle"), dim=0
-    )
-    df_rb = pl.read_csv(CSV_FILE_ROSENBROCK).with_columns(
-        model=pl.lit("Rosenbrock")
+        case=pl.lit("Methionine cycle"), dim=0
     )
     df_linear = pl.read_csv(CSV_FILE_LINEAR).with_columns(
-        model=pl.lit("Toy reaction network"), dim=0
+        case=pl.lit("Linear network"), dim=0
     )
     df_trajectory = pl.read_csv(CSV_FILE_TRAJECTORY)
-    df_performance = pl.concat([df_linear, df_methionine, df_rb], how="align")
+
+    df_test_functions = pl.read_csv(CSV_FILE_TEST_FUNCTIONS)
+
+    df_performance = pl.concat(
+        [df_test_functions, df_linear, df_methionine], how="align"
+    )
 
     f, _ = performance_fig(df_performance)
     f.savefig(HERE / "performance.png", bbox_inches="tight", dpi=300)

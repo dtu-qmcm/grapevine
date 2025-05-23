@@ -32,12 +32,19 @@ def time_run(run_fn):
         neff = np.sum([ess[v].values.sum() for v in ess.data_vars]).item()
         n_newton_steps = idata.sample_stats["n_newton_steps"].values.sum()
         runtime = end - start
+        divergences = idata.sample_stats["diverging"].sum()
     except Exception as err:
         print(err)
         neff = 0.0
         n_newton_steps = 0
         runtime = 0.0
-    return {"time": runtime, "neff": neff, "n_newton_steps": n_newton_steps}
+        divergences = 1
+    return {
+        "time": runtime,
+        "neff": neff,
+        "n_newton_steps": n_newton_steps,
+        "divergences": divergences,
+    }
 
 
 def compare_single(
