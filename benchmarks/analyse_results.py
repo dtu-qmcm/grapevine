@@ -98,10 +98,10 @@ def performance_fig(results: pl.DataFrame):
     for (heuristic,), subdf in plot_df.group_by(
         "heuristic", maintain_order=True
     ):
-        sct = ax.scatter(
+        ax.scatter(
             subdf["x"] + subdf["x_jitter"],
             subdf["steps_per_neff"],
-            label=heuristic,
+            label=str(heuristic).replace("_", "-").capitalize(),
             alpha=0.8,
         )
         fail = subdf.filter(pl.col("n_newton_steps") == 0)
@@ -109,11 +109,20 @@ def performance_fig(results: pl.DataFrame):
             fail["x"] + fail["x_jitter"],
             fail["n_newton_steps"] + 0.1,
             marker="x",
-            color=sct.get_facecolor(),
+            color="red",
+            label="Unsuccessful MCMC run",
         )
-    ax.legend(frameon=False, title="Heuristic")
-    ax.grid(visible=True, which="major", axis="y")
-    ax.set_xticks(cases["x"], list(cases["case"]), fontsize="x-small")
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(
+        sorted(dict(zip(labels, handles)).items())
+    )  # Remove duplicate labels
+    ax.legend(
+        by_label.values(),
+        by_label.keys(),
+        frameon=False,
+    )
+    # ax.grid(visible=True, which="major", axis="y")
+    ax.set_xticks(cases["x"], list(cases["case"]), fontsize="xx-small")
     ax.set(
         ylabel="Newton steps per effective sample",
         xlabel="Test case",
