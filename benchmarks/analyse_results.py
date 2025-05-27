@@ -13,6 +13,11 @@ CSV_FILE_ROSENBROCK = HERE / "rosenbrock.csv"
 CSV_FILE_LINEAR = HERE / "linear.csv"
 CSV_FILE_TRAJECTORY = HERE / "trajectory.csv"
 CSV_FILE_TEST_FUNCTIONS = HERE / "test_functions.csv"
+HEURISTIC_COLORS = {
+    "guess_static": "tab:blue",
+    "guess_previous": "tab:orange",
+    "guess_implicit": "tab:green",
+}
 
 
 class HandlerArrow(HandlerPatch):
@@ -89,7 +94,9 @@ def performance_fig(results: pl.DataFrame):
     plot_df = (
         results.join(cases, on="case")
         .with_columns(
-            x_jitter=np.random.normal(scale=0.01, size=results.shape[0]),
+            x_jitter=pl.Series(
+                np.random.normal(scale=0.01, size=results.shape[0])
+            ),
             steps_per_neff=pl.col("n_newton_steps") / pl.col("neff"),
         )
         # guess_implicit_cg should behave the same as guess_implicit
@@ -124,7 +131,7 @@ def performance_fig(results: pl.DataFrame):
     # ax.grid(visible=True, which="major", axis="y")
     ax.set_xticks(cases["x"], list(cases["case"]), fontsize="xx-small")
     ax.set(
-        ylabel="Newton steps per effective sample",
+        ylabel="Solver steps per effective sample",
         xlabel="Test case",
     )
     ax.semilogy()
@@ -132,70 +139,66 @@ def performance_fig(results: pl.DataFrame):
     return f, ax
 
 
-def trajectory_fig(result: pl.DataFrame):
-    min_steps = result[["GN", "NUTS"]].to_numpy().min()
-    max_steps = result[["GN", "NUTS"]].to_numpy().max()
-    bins = np.linspace(min_steps - 1.5, max_steps + 1.5, 20)
-    f, axes = plt.subplots(1, 2, figsize=[15, 5])
-    axes[0].plot(
-        result["sol_0"],
-        result["sol_1"],
-        "o",
-        color="black",
-        label="solution",
+def trajectory_scatter(result: pl.DataFrame):
+    f, axes = plt.subplots(3, 1, figsize=[8, 10], sharex=True)
+    axes = axes.ravel()
+    gfunc_to_ax = dict(zip(HEURISTIC_COLORS.keys(), axes))
+    sol_x = (
+        result.sort("i", "j")
+        .group_by("i", maintain_order=True)
+        .agg(pl.col("sol_0").last())["sol_0"]
     )
-    axes[0].plot(
-        result["default_0"][0],
-        result["default_1"][0],
-        "s",
-        color="tab:orange",
-        label="Default guess",
+    sol_y = (
+        result.sort("i", "j")
+        .group_by("i", maintain_order=True)
+        .agg(pl.col("sol_1").last())["sol_1"]
     )
-    axes[0].plot(
-        result["guess_0"],
-        result["guess_1"],
-        "|",
-        color="tab:blue",
-        label="Grapevine guess",
-        markersize=10,
-        zorder=-1,
-    )
-    for sx, sy, gx, gy in result[
-        ["sol_0", "sol_1", "guess_0", "guess_1"]
-    ].iter_rows():
-        dx = sx - gx
-        dy = sy - gy
-        arrow = axes[0].arrow(
-            gx,
-            gy,
-            dx,
-            dy,
-            # alpha=0.3,
-            color="olivedrab",
-            fill=True,
-            linewidth=0.1,
-            length_includes_head=True,
+    for (gfunc,), subdf in result.group_by("gfunc", maintain_order=True):
+        assert isinstance(gfunc, str)
+        ax = gfunc_to_ax[gfunc]
+        total_steps = len(subdf) - 1
+        legend_info = dict()
+        sct = ax.scatter(sol_x, sol_y, color="black", label="solution")
+        for i, subsubdf in subdf.group_by("i", maintain_order=True):
+            x = [subsubdf["guess_0"].first()] + subsubdf["sol_0"].to_list()
+            y = [subsubdf["guess_1"].first()] + subsubdf["sol_1"].to_list()
+            line = ax.plot(
+                x,
+                y,
+                marker="x",
+                color=HEURISTIC_COLORS[gfunc],
+                markevery=slice(1, None),
+                zorder=-1,
+                lw=1,
+            )[0]
+            line_color = line.get_color()
+            marker = line.get_marker()
+            line_handle = matplotlib.lines.Line2D(
+                [],
+                [],
+                color=line_color,
+                linestyle="-",
+            )
+            marker_handle = matplotlib.lines.Line2D(
+                [],
+                [],
+                color=line_color,
+                marker=marker,
+                linestyle="None",
+                markersize=8,
+            )
+
+        legend_info["Solution"] = sct
+        legend_info["Solver path"] = line_handle
+        legend_info["Newton step"] = marker_handle
+        ax.legend(legend_info.values(), legend_info.keys(), frameon=False)
+        ax.set(
+            title="Heuristic: "
+            + gfunc.replace("_", "-")
+            + f" (total steps: {total_steps})",
+            ylabel="Solution component 2",
         )
-    h, labels = axes[0].get_legend_handles_labels()
-    h.append(arrow)
-    labels.append("Grapevine guess to solution")
-    axes[1].hist(result["GN"], bins=bins, alpha=0.8, label="Grapevine")
-    axes[1].hist(result["NUTS"], bins=bins, alpha=0.8, label="Default guess")
-    axes[0].legend(
-        h,
-        labels,
-        handler_map={mpatches.FancyArrow: HandlerArrow()},
-        frameon=False,
-    )
-    axes[1].legend(frameon=False)
-    axes[0].set(
-        xlabel="Solution component 1",
-        ylabel="Solution component 2",
-    )
-    axes[1].set(
-        xlabel="Number of Newton steps\n(fewer is better)",
-        ylabel="Frequency",
-    )
+    axes[-1].set(xlabel="Solution component 1")
     return f, axes
 
 
@@ -218,7 +221,7 @@ def main():
     f, _ = performance_fig(df_performance)
     f.savefig(HERE / "performance.png", bbox_inches="tight", dpi=300)
 
-    f, _ = trajectory_fig(df_trajectory)
+    f, _ = trajectory_scatter(df_trajectory)
     f.savefig(HERE / "trajectory.png", bbox_inches="tight", dpi=300)
 
 
