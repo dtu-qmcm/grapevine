@@ -110,6 +110,7 @@ def performance_fig(results: pl.DataFrame):
             subdf["steps_per_neff"],
             label=str(heuristic).replace("_", "-").capitalize(),
             alpha=0.8,
+            color=HEURISTIC_COLORS[heuristic],
         )
         fail = subdf.filter(pl.col("n_newton_steps") == 0)
         ax.scatter(
