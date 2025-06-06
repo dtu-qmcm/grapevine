@@ -1,11 +1,9 @@
 from pathlib import Path
 
 import matplotlib
-import matplotlib.patches as mpatches
 import numpy as np
 import polars as pl
 from matplotlib import pyplot as plt
-from matplotlib.legend_handler import HandlerPatch
 
 HERE = Path(__file__).parent
 CSV_FILE_METHIONINE = HERE / "methionine.csv"
@@ -18,39 +16,6 @@ HEURISTIC_COLORS = {
     "guess_previous": "tab:orange",
     "guess_implicit": "tab:green",
 }
-
-
-class HandlerArrow(HandlerPatch):
-    """Custom legend handler for arrows.
-
-    Copied from <https://stackoverflow.com/questions/60781312/plotting-arrow-in-front-of-legend>
-    """
-
-    def create_artists(
-        self,
-        legend,
-        orig_handle,
-        xdescent,
-        ydescent,
-        width,
-        height,
-        fontsize,
-        trans,
-    ):
-        p = mpatches.FancyArrow(
-            0,
-            0.5 * height,
-            width,
-            0,
-            length_includes_head=True,
-            head_width=0.7 * height,
-            fill=True,
-            linewidth=0,
-            color="tab:blue",
-        )
-        self.update_prop(p, orig_handle, legend)
-        p.set_transform(trans)
-        return [p]
 
 
 def plot_comparison(ax_title: str, df: pl.DataFrame, ax: plt.Axes):
@@ -85,15 +50,8 @@ def mm_fig(results_df: pl.DataFrame):
 
 def performance_fig(results: pl.DataFrame):
     f, ax = plt.subplots(figsize=[8, 5])
-    cases = pl.DataFrame(
-        {
-            "case": results["case"].unique(maintain_order=True),
-            "x": np.linspace(*ax.get_xlim(), results["case"].n_unique()),
-        }
-    )
     plot_df = (
-        results.join(cases, on="case")
-        .with_columns(
+        results.with_columns(
             x_jitter=pl.Series(
                 np.random.normal(scale=0.01, size=results.shape[0])
             ),
@@ -101,7 +59,15 @@ def performance_fig(results: pl.DataFrame):
         )
         # guess_implicit_cg should behave the same as guess_implicit
         .filter(pl.col("heuristic") != "guess_implicit_cg")
+        .sort(pl.col("steps_per_neff").mean().over("case"))
     )
+    x = pl.DataFrame(
+        {
+            "case": plot_df["case"].unique(maintain_order=True),
+            "x": np.linspace(*ax.get_xlim(), plot_df["case"].n_unique()),
+        }
+    )
+    plot_df = plot_df.join(x, on="case")
     for (heuristic,), subdf in plot_df.group_by(
         "heuristic", maintain_order=True
     ):
@@ -130,17 +96,17 @@ def performance_fig(results: pl.DataFrame):
         frameon=False,
     )
     # ax.grid(visible=True, which="major", axis="y")
-    ax.set_xticks(cases["x"], list(cases["case"]), fontsize="xx-small")
+    ax.set_xticks(x["x"], list(x["case"]), fontsize="xx-small")
     ax.set(
         ylabel="Solver steps per effective sample",
-        xlabel="Test case",
+        xlabel="Benchmark",
     )
     ax.semilogy()
     # ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
     return f, ax
 
 
-def trajectory_scatter(result: pl.DataFrame):
+def illustrative_figure(result: pl.DataFrame):
     f, axes = plt.subplots(3, 1, figsize=[8, 10], sharex=True)
     axes = axes.ravel()
     gfunc_to_ax = dict(zip(HEURISTIC_COLORS.keys(), axes))
@@ -166,14 +132,22 @@ def trajectory_scatter(result: pl.DataFrame):
             line = ax.plot(
                 x,
                 y,
-                marker="x",
                 color=HEURISTIC_COLORS[gfunc],
-                markevery=slice(1, None),
                 zorder=-1,
                 lw=1,
             )[0]
+            crosses = ax.plot(
+                [xi + 0.001 for xi in x],
+                [yi - 0.005 for yi in y],
+                color=HEURISTIC_COLORS[gfunc],
+                marker="^",
+                markevery=slice(1, None),
+                zorder=-1,
+                markersize=2,
+                lw=0,
+            )[0]
             line_color = line.get_color()
-            marker = line.get_marker()
+            marker = crosses.get_marker()
             line_handle = matplotlib.lines.Line2D(
                 [],
                 [],
@@ -222,7 +196,7 @@ def main():
     f, _ = performance_fig(df_performance)
     f.savefig(HERE / "performance.png", bbox_inches="tight", dpi=300)
 
-    f, _ = trajectory_scatter(df_trajectory)
+    f, _ = illustrative_figure(df_trajectory)
     f.savefig(HERE / "trajectory.png", bbox_inches="tight", dpi=300)
 
 
