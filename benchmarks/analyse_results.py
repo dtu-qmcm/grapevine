@@ -110,156 +110,66 @@ def performance_fig(results: pl.DataFrame):
 
 
 def create_trajectory_animation(result: pl.DataFrame):
-    # Determine bounds
+    f, axes = plt.subplots(3, 1, figsize=[8, 10], sharex=True)
+
     all_x = result["guess_0"].to_list() + result["sol_0"].to_list()
     all_y = result["guess_1"].to_list() + result["sol_1"].to_list()
-    xlim = (min(all_x) - 0.05, max(all_x) + 0.05)
-    ylim = (min(all_y) - 0.05, max(all_y) + 0.05)
-
-    data_by_gfunc = {
-        gfunc: subdf
-        for (gfunc,), subdf in result.group_by("gfunc", maintain_order=True)
-    }
-
-    # Build per-heuristic schedules
-    schedules = {}
-    max_frames = 0
-    for gfunc, subdf in data_by_gfunc.items():
-        sched = []
-        unique_i = sorted(subdf["i"].unique())
-        for i in unique_i:
-            # Add initial guess frame for each MCMC step
-            sched.append((i, -1))
-            step_data = subdf.filter(pl.col("i") == i)
-            max_j = step_data["j"].max()
-            if max_j is not None:
-                # Add frames for each Newton step
-                for j in range(max_j + 1):
-                    sched.append((i, j))
-
-        schedules[gfunc] = sched
-        max_frames = max(max_frames, len(sched))
-
-    f, axes = plt.subplots(3, 1, figsize=[8, 10], sharex=True)
-    axes = axes.ravel()
-    gfunc_to_ax = dict(zip(HEURISTIC_COLORS.keys(), axes))
+    xlim = (min(all_x) - 0.01, max(all_x) + 0.01)
+    ylim = (min(all_y) - 0.01, max(all_y) + 0.01)
+    df = result.pivot(on="gfunc", index=["i", "j"])
+    sol_x, sol_y = (
+        result.filter(gfunc="guess_implicit")
+        .group_by("i", maintain_order=True)
+        .last()[f"sol_{str(i)}"]
+        for i in (0, 1)
+    )
 
     def update(frame_idx):
-        for ax in axes:
+        for ax, gfunc, color in zip(
+            axes,
+            HEURISTIC_COLORS.keys(),
+            HEURISTIC_COLORS.values(),
+        ):
+            xcol = "sol_0_" + gfunc
+            ycol = "sol_1_" + gfunc
+            first_guess_x = df["guess_0_" + gfunc][0]
+            first_guess_y = df["guess_1_" + gfunc][0]
             ax.clear()
             ax.set_xlim(xlim)
             ax.set_ylim(ylim)
-
-        for gfunc, ax in gfunc_to_ax.items():
-            subdf = data_by_gfunc.get(gfunc)
-            if subdf is None:
-                continue
-
-            sched = schedules[gfunc]
-            if frame_idx >= len(sched):
-                curr_state = sched[-1]
-                # Count frames that are NOT (i, -1) frames for total Newton steps
-                step_count = sum(1 for s in sched if s[1] >= 0)
-            else:
-                curr_state = sched[frame_idx]
-                # Count Newton steps up to current frame
-                step_count = sum(1 for s in sched[: frame_idx + 1] if s[1] >= 0)
-
-            curr_i, curr_j = curr_state
-
-            # 1. History (Previous i): Plot full paths
-            history = subdf.filter(pl.col("i") < curr_i)
-            if not history.is_empty():
-                for _, step_df in history.group_by("i"):
-                    step_df = step_df.sort("j")
-                    x_hist = [step_df["guess_0"][0]] + step_df[
-                        "sol_0"
-                    ].to_list()
-                    y_hist = [step_df["guess_1"][0]] + step_df[
-                        "sol_1"
-                    ].to_list()
-
-                    # Completed path
-                    ax.plot(
-                        x_hist,
-                        y_hist,
-                        color=HEURISTIC_COLORS[gfunc],
-                        lw=0.5,
-                        alpha=0.3,
-                        zorder=-1,
-                    )
-                    # Final solution
-                    ax.scatter(
-                        x_hist[-1], y_hist[-1], color="black", s=10, zorder=0
-                    )
-
-            # 2. Current i
-            current_step_full = subdf.filter(pl.col("i") == curr_i).sort("j")
-            if not current_step_full.is_empty():
-                guess_point = (
-                    current_step_full["guess_0"][0],
-                    current_step_full["guess_1"][0],
-                )
-
-                if curr_j == -1:
-                    # Just the guess
-                    x_path = [guess_point[0]]
-                    y_path = [guess_point[1]]
-                else:
-                    # Draw path up to curr_j
-                    current_partial = current_step_full.filter(
-                        pl.col("j") <= curr_j
-                    )
-                    x_path = [guess_point[0]] + current_partial[
-                        "sol_0"
-                    ].to_list()
-                    y_path = [guess_point[1]] + current_partial[
-                        "sol_1"
-                    ].to_list()
-
-                # Draw current path
-                ax.plot(
-                    x_path,
-                    y_path,
-                    color=HEURISTIC_COLORS[gfunc],
-                    lw=1.5,
-                    zorder=1,
-                )
-
-                # Markers for intermediate steps
-                if len(x_path) > 1:
-                    ax.plot(
-                        x_path[1:],
-                        y_path[1:],
-                        color=HEURISTIC_COLORS[gfunc],
-                        marker="^",
-                        linestyle="None",
-                        markersize=4,
-                        zorder=1,
-                    )
-
-                # Current position marker
-                ax.plot(
-                    x_path[-1],
-                    y_path[-1],
-                    color=HEURISTIC_COLORS[gfunc],
-                    marker="o",
-                    markersize=8,
-                    markeredgecolor="black",
-                    zorder=2,
-                )
-
-            gfunc_clean = gfunc.replace("_", "-")
-            ax.set_title(
-                f"Heuristic: {gfunc_clean} (steps so far: {step_count})"
+            ax.scatter(
+                sol_x, sol_y, color="black", marker="x", label="Solution"
             )
-            ax.set_ylabel("Solution component 2")
-
-        axes[-1].set(xlabel="Solution component 1")
+            df_so_far = (
+                df.drop_nulls(subset=xcol)
+                .with_row_index()
+                .filter(pl.col("index") <= frame_idx)
+            )
+            x_so_far = [first_guess_x] + df_so_far[xcol].to_list()
+            y_so_far = [first_guess_y] + df_so_far[ycol].to_list()
+            i = df_so_far["i"].max()
+            df_i_so_far = df_so_far.filter(i=i)
+            guess_xi = df_i_so_far["guess_0_" + gfunc][0]
+            guess_yi = df_i_so_far["guess_1_" + gfunc][0]
+            xi_so_far = [guess_xi] + df_i_so_far[xcol].to_list()
+            yi_so_far = [guess_yi] + df_i_so_far[ycol].to_list()
+            ax.scatter(guess_xi, guess_yi, color=color, label="Guess")
+            ax.plot(x_so_far, y_so_far, color=color, alpha=0.2)
+            ax.plot(xi_so_far, yi_so_far, color=color)
+            n_steps = df_so_far[xcol].is_not_null().sum()
+            ax.set_title(f"Heuristic: {gfunc} (steps so far: {n_steps})")
+            ax.legend(frameon=False)
+        axes[-1].set(xlabel="Solution component 0")
+        axes[1].set(ylabel="Solution component 1")
         return axes
 
-    anim = FuncAnimation(f, update, frames=max_frames, interval=200)
-    return anim
+    return FuncAnimation(
+        f,
+        update,
+        frames=len(df),
+        interval=200,
+        repeat_delay=1000,
+    )
 
 
 def illustrative_figure(result: pl.DataFrame):
