@@ -49,7 +49,7 @@ def mm_fig(results_df: pl.DataFrame):
     return f, ax
 
 
-def performance_fig(results: pl.DataFrame, col, yfail=1e-1):
+def performance_fig(results: pl.DataFrame, col, yfail: float | None = None):
     f, ax = plt.subplots(figsize=[10, 5])
     plot_df = (
         results.with_columns(
@@ -79,14 +79,16 @@ def performance_fig(results: pl.DataFrame, col, yfail=1e-1):
             s=8,
             color=HEURISTIC_COLORS[heuristic],
         )
-        fail = subdf.filter(pl.col("n_newton_steps") == 0)
-        ax.scatter(
-            fail["x"] + fail["x_jitter"],
-            fail["n_newton_steps"] + yfail,
-            marker="|",
-            color=HEURISTIC_COLORS[heuristic],
-            label="Unsuccessful MCMC run",
-        )
+        if yfail is not None:
+            fail = subdf.filter(pl.col("n_newton_steps") == 0)
+            ax.scatter(
+                fail["x"] + fail["x_jitter"],
+                fail["n_newton_steps"] + yfail,
+                marker="|",
+                color=HEURISTIC_COLORS[heuristic],
+                label="Unsuccessful MCMC run",
+            )
+    ax.axhline(0, color="red", lw=1)
     handles, labels = ax.get_legend_handles_labels()
     by_label = dict(
         sorted(dict(zip(labels, handles)).items())
@@ -96,16 +98,20 @@ def performance_fig(results: pl.DataFrame, col, yfail=1e-1):
         by_label.keys(),
         frameon=False,
     )
-    leg.legend_handles[-1].set_facecolor("black")
+    if yfail is not None:
+        leg.legend_handles[-1].set_facecolor("black")
 
     # ax.grid(visible=True, which="major", axis="y")
+    if yfail is None:
+        ax.text(0, 0.3, "↑ Static guessing better", va="bottom", ha="left")
+        ax.text(0, -0.3, "↓ Dynamic guessing better", va="top", ha="left")
     ax.set_xticks(
         x["x"],
         list(x["case"].str.replace("-", "\n")),
         fontsize="xx-small",
     )
     if col == "n_newton_steps":
-        ylabel = "Number of solver steps for 500 MCMC iterations"
+        ylabel = "Solver steps (Difference vs static)"
     elif col == "time":
         ylabel = "Time to complete MCMC run (seconds)"
     else:
@@ -114,7 +120,7 @@ def performance_fig(results: pl.DataFrame, col, yfail=1e-1):
         ylabel=ylabel,
         xlabel="Model",
     )
-    ax.semilogy()
+    ax.set_yscale("symlog")
     # ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
     return f, ax
 
@@ -270,6 +276,23 @@ def main():
         [df_test_functions, df_linear, df_methionine, df_adversarial],
         how="align",
     )
+    comp = df_performance.filter(heuristic="guess_static")[
+        ["case", "rep", "time", "n_newton_steps"]
+    ]
+    rel_performance = (
+        df_performance.filter(pl.col("heuristic") != "guess_static")
+        .join(
+            comp,
+            on=["case", "rep"],
+        )
+        .filter(pl.col("time_right") != 0)
+        .with_columns(
+            time=pl.col("time") - pl.col("time_right"),
+            n_newton_steps=pl.col("n_newton_steps")
+            - pl.col("n_newton_steps_right"),
+        )
+        .drop(pl.selectors.ends_with("_right"))
+    )
     time_summary, step_summary = (
         df_performance.filter(
             pl.col("time") != 0.0,
@@ -298,10 +321,11 @@ def main():
         print(time_summary)
         print("Step summary")
         print(step_summary)
-    f, _ = performance_fig(df_performance, col="n_newton_steps", yfail=1e3)
+    f, _ = performance_fig(rel_performance, col="n_newton_steps")
     f.savefig(HERE / "performance.png", bbox_inches="tight", dpi=300)
 
-    f, _ = performance_fig(df_performance, col="time", yfail=1e-2)
+    f, ax = performance_fig(df_performance, col="time", yfail=0.01)
+    ax.semilogy()
     f.savefig(HERE / "wall-time.png", bbox_inches="tight", dpi=300)
 
     f, _ = illustrative_figure(df_trajectory)
