@@ -82,6 +82,7 @@ def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
             "diverging": info.is_divergent,
             "energy": info.energy,
             "n_newton_steps": samples.n_newton_steps,
+            "n_leapfrog_steps": info.num_integration_steps,
         },
         group="sample_stats",
     )
