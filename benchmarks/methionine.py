@@ -14,7 +14,7 @@ jax.config.update("jax_enable_x64", True)
 SEED = 1234
 HERE = Path(__file__).parent
 CSV_OUTPUT_FILE = HERE / "methionine.csv"
-N_TEST = 6
+N_TEST = 20
 DEFAULT_GUESS_INFO = (
     methionine.DEFAULT_GUESS,
     methionine.TRUE_PARAMS,

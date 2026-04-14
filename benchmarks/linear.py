@@ -28,10 +28,10 @@ jax.config.update("jax_enable_x64", True)
 SEED = 1234
 HERE = Path(__file__).parent
 CSV_OUTPUT_FILE = HERE / "linear.csv"
-N_TEST = 6
+N_TEST = 20
 RUN_GRAPENUTS_KWARGS = dict(
     num_warmup=2000,
-    num_samples=1000,
+    num_samples=500,
     initial_step_size=0.0001,
     max_num_doublings=10,
     is_mass_matrix_diagonal=False,

@@ -8,7 +8,7 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 
 HERE = Path(__file__).parent
 CSV_FILE_METHIONINE = HERE / "methionine.csv"
-CSV_FILE_ROSENBROCK = HERE / "rosenbrock.csv"
+CSV_FILE_ADVERSARIAL = HERE / "adversarial.csv"
 CSV_FILE_LINEAR = HERE / "linear.csv"
 CSV_FILE_TRAJECTORY = HERE / "trajectory.csv"
 CSV_FILE_TEST_FUNCTIONS = HERE / "test_functions.csv"
@@ -49,18 +49,17 @@ def mm_fig(results_df: pl.DataFrame):
     return f, ax
 
 
-def performance_fig(results: pl.DataFrame):
-    f, ax = plt.subplots(figsize=[8, 5])
+def performance_fig(results: pl.DataFrame, col, yfail=1e-1):
+    f, ax = plt.subplots(figsize=[10, 5])
     plot_df = (
         results.with_columns(
             x_jitter=pl.Series(
                 np.random.normal(scale=0.01, size=results.shape[0])
-            ),
-            steps_per_neff=pl.col("n_newton_steps") / pl.col("neff"),
+            )
         )
         # guess_implicit_cg should behave the same as guess_implicit
         .filter(pl.col("heuristic") != "guess_implicit_cg")
-        .sort(pl.col("steps_per_neff").mean().over("case"))
+        .sort(pl.col(col).mean().over("case"))
     )
     x = pl.DataFrame(
         {
@@ -74,15 +73,16 @@ def performance_fig(results: pl.DataFrame):
     ):
         ax.scatter(
             subdf["x"] + subdf["x_jitter"],
-            subdf["steps_per_neff"],
+            subdf[col],
             label=str(heuristic).replace("_", "-").capitalize(),
-            alpha=0.8,
+            alpha=1,
+            s=8,
             color=HEURISTIC_COLORS[heuristic],
         )
         fail = subdf.filter(pl.col("n_newton_steps") == 0)
         ax.scatter(
             fail["x"] + fail["x_jitter"],
-            fail["n_newton_steps"] + 0.1,
+            fail["n_newton_steps"] + yfail,
             marker="|",
             color=HEURISTIC_COLORS[heuristic],
             label="Unsuccessful MCMC run",
@@ -99,10 +99,20 @@ def performance_fig(results: pl.DataFrame):
     leg.legend_handles[-1].set_facecolor("black")
 
     # ax.grid(visible=True, which="major", axis="y")
-    ax.set_xticks(x["x"], list(x["case"]), fontsize="xx-small")
+    ax.set_xticks(
+        x["x"],
+        list(x["case"].str.replace("-", "\n")),
+        fontsize="xx-small",
+    )
+    if col == "n_newton_steps":
+        ylabel = "Number of solver steps for 500 MCMC iterations"
+    elif col == "time":
+        ylabel = "Time to complete MCMC run (seconds)"
+    else:
+        ylabel = "Metric"
     ax.set(
-        ylabel="Solver steps per effective sample",
-        xlabel="Benchmark",
+        ylabel=ylabel,
+        xlabel="Model",
     )
     ax.semilogy()
     # ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
@@ -254,13 +264,45 @@ def main():
     df_trajectory = pl.read_csv(CSV_FILE_TRAJECTORY)
 
     df_test_functions = pl.read_csv(CSV_FILE_TEST_FUNCTIONS)
+    df_adversarial = pl.read_csv(CSV_FILE_ADVERSARIAL)
 
     df_performance = pl.concat(
-        [df_test_functions, df_linear, df_methionine], how="align"
+        [df_test_functions, df_linear, df_methionine, df_adversarial],
+        how="align",
     )
-
-    f, _ = performance_fig(df_performance)
+    time_summary, step_summary = (
+        df_performance.filter(
+            pl.col("time") != 0.0,
+            pl.col("heuristic") != "guess_implicit_cg",
+        )
+        .group_by("case", "heuristic")
+        .agg(
+            pl.col(col).min().alias("min"),
+            pl.col(col).mean().alias("mean"),
+            pl.col(col).max().alias("max"),
+        )
+        .with_columns(
+            summary=pl.concat_list("mean", "min", "max").map_elements(
+                lambda x: f"{x[0]: .2f} (min {x[1]: .2f}, max {x[2]: .2f})",
+                return_dtype=pl.String,
+            )
+        )[["case", "heuristic", "summary"]]
+        .pivot(on="heuristic", values="summary")
+        for col in ("time", "n_newton_steps")
+    )
+    with pl.Config() as cfg:
+        cfg.set_tbl_formatting("MARKDOWN")
+        cfg.set_fmt_str_lengths(999)
+        cfg.set_tbl_rows(999)
+        print("Time summary")
+        print(time_summary)
+        print("Step summary")
+        print(step_summary)
+    f, _ = performance_fig(df_performance, col="n_newton_steps", yfail=1e3)
     f.savefig(HERE / "performance.png", bbox_inches="tight", dpi=300)
+
+    f, _ = performance_fig(df_performance, col="time", yfail=1e-2)
+    f.savefig(HERE / "wall-time.png", bbox_inches="tight", dpi=300)
 
     f, _ = illustrative_figure(df_trajectory)
     f.savefig(HERE / "trajectory.png", bbox_inches="tight", dpi=300)

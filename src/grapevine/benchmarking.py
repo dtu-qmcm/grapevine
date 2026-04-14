@@ -118,7 +118,7 @@ def run_benchmark(
         )
         result = result.with_columns(rep=i)
         results.append(result)
-    return pl.concat(results).sort("heuristic", "rep")
+    return pl.concat(results, how="vertical_relaxed").sort("heuristic", "rep")
 
 
 @dataclass
