@@ -33,7 +33,6 @@ RUN_GRAPENUTS_KWARGS = dict(
     initial_step_size=0.001,
     max_num_doublings=10,
     is_mass_matrix_diagonal=False,
-    target_acceptance_rate=0.99,
     progress_bar=False,
 )
 
@@ -42,18 +41,18 @@ def f_parameterised(x, args):
     # Highly oscillatory pseudorandom-like root target with non-linear root-finding problem.
     # The root jumps unpredictably between Hamiltonian trajectory steps.
     # guess_implicit will perform worse here because of the massive gradients.
-    theta = args["theta"][0]
+    theta = args["theta"]
     k = jnp.array(1e6)
     return x**3 + x - jnp.sin(k * theta) * jnp.cos(k * theta)
 
 
 MAX_STEPS = 1000
-SOLVER = optx.Newton(rtol=1e-5, atol=1e-5)
-ERROR_SD = 0.05
+SOLVER = optx.Newton(rtol=1e-8, atol=1e-8)
+ERROR_SD = 0.1
 PRIOR_SD = 0.1
 DEFAULT_GUESS_INFO = (
-    jnp.full((1,), 0.0),
-    OrderedDict(theta=jnp.full((1,), 0.0)),
+    jnp.full((8,), 0.0),
+    OrderedDict(theta=jnp.full((8,), 0.0)),
     0,
 )
 

@@ -43,4 +43,6 @@ benchmarks = [
     "tqdm>=4.67.1",
     "diffrax>=0.7.0",
     "optimistix>=0.0.10",
+    "fastprogress>=1.1.5",
+    "ipython>=9.12.0",
 ]

@@ -4,6 +4,7 @@ import matplotlib
 import numpy as np
 import polars as pl
 from matplotlib import pyplot as plt
+from matplotlib import ticker
 from matplotlib.animation import FuncAnimation, PillowWriter
 
 HERE = Path(__file__).parent
@@ -49,12 +50,12 @@ def mm_fig(results_df: pl.DataFrame):
     return f, ax
 
 
-def performance_fig(results: pl.DataFrame, col, yfail: float | None = None):
+def performance_fig(results: pl.DataFrame, col):
     f, ax = plt.subplots(figsize=[10, 5])
     plot_df = (
         results.with_columns(
             x_jitter=pl.Series(
-                np.random.normal(scale=0.01, size=results.shape[0])
+                np.random.normal(scale=0.002, size=results.shape[0])
             )
         )
         # guess_implicit_cg should behave the same as guess_implicit
@@ -68,60 +69,42 @@ def performance_fig(results: pl.DataFrame, col, yfail: float | None = None):
         }
     )
     plot_df = plot_df.join(x, on="case")
-    for (heuristic,), subdf in plot_df.group_by(
-        "heuristic", maintain_order=True
+    for i, ((heuristic,), subdf) in enumerate(
+        plot_df.group_by("heuristic", maintain_order=True)
     ):
+        x_offset_size = 0.01
+        x_offset = -x_offset_size if i == 0 else x_offset_size
         ax.scatter(
-            subdf["x"] + subdf["x_jitter"],
+            subdf["x"] + x_offset + subdf["x_jitter"],
             subdf[col],
-            label=str(heuristic).replace("_", "-").capitalize(),
-            alpha=1,
+            label=str(heuristic).replace("_", "-"),
+            alpha=0.6,
             s=8,
             color=HEURISTIC_COLORS[heuristic],
         )
-        if yfail is not None:
-            fail = subdf.filter(pl.col("n_newton_steps") == 0)
-            ax.scatter(
-                fail["x"] + fail["x_jitter"],
-                fail["n_newton_steps"] + yfail,
-                marker="|",
-                color=HEURISTIC_COLORS[heuristic],
-                label="Unsuccessful MCMC run",
-            )
-    ax.axhline(0, color="red", lw=1)
+    ax.axhline(1, color="red", lw=1)
     handles, labels = ax.get_legend_handles_labels()
     by_label = dict(
         sorted(dict(zip(labels, handles)).items())
     )  # Remove duplicate labels
-    leg = ax.legend(
+    _ = ax.legend(
         by_label.values(),
         by_label.keys(),
         frameon=False,
     )
-    if yfail is not None:
-        leg.legend_handles[-1].set_facecolor("black")
-
-    # ax.grid(visible=True, which="major", axis="y")
-    if yfail is None:
-        ax.text(0, 0.3, "↑ Static guessing better", va="bottom", ha="left")
-        ax.text(0, -0.3, "↓ Dynamic guessing better", va="top", ha="left")
     ax.set_xticks(
         x["x"],
         list(x["case"].str.replace("-", "\n")),
         fontsize="xx-small",
     )
-    if col == "n_newton_steps":
-        ylabel = "Solver steps (Difference vs static)"
-    elif col == "time":
-        ylabel = "Time to complete MCMC run (seconds)"
-    else:
-        ylabel = "Metric"
-    ax.set(
-        ylabel=ylabel,
-        xlabel="Model",
-    )
-    ax.set_yscale("symlog")
-    # ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax.text(-0.06, 1.3, "↑dynamic better", fontsize=8)
+    ax.text(-0.06, 0.7, "↓static better", fontsize=8)
+    var = "Solver steps" if col == "n_newton_steps" else "Wall time"
+    ylabel = f"{var} (static / dynamic)"
+    ax.set(ylabel=ylabel, xlabel="Model")
+    ax.semilogy()
+    ax.set_yticks([0.1, 1.0, 10.0])
+    ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
     return f, ax
 
 
@@ -285,13 +268,20 @@ def main():
             comp,
             on=["case", "rep"],
         )
-        .filter(pl.col("time_right") != 0)
+        .filter(pl.col("time_right") != 0, pl.col("time") != 0)
         .with_columns(
-            time=pl.col("time") - pl.col("time_right"),
-            n_newton_steps=pl.col("n_newton_steps")
-            - pl.col("n_newton_steps_right"),
+            time=pl.col("time_right") / pl.col("time"),
+            n_newton_steps=pl.col("n_newton_steps_right")
+            / pl.col("n_newton_steps"),
         )
         .drop(pl.selectors.ends_with("_right"))
+    )
+    fail_count = (
+        df_performance.with_columns(fail=pl.col("time") == 0)
+        .group_by("case", "heuristic")
+        .agg(pl.col("fail").sum())
+        .pivot(on="heuristic", values="fail")
+        .drop("guess_implicit_cg")
     )
     time_summary, step_summary = (
         df_performance.filter(
@@ -317,15 +307,17 @@ def main():
         cfg.set_tbl_formatting("MARKDOWN")
         cfg.set_fmt_str_lengths(999)
         cfg.set_tbl_rows(999)
+        print("Fail count")
+        print(fail_count)
         print("Time summary")
         print(time_summary)
         print("Step summary")
         print(step_summary)
-    f, _ = performance_fig(rel_performance, col="n_newton_steps")
+    f, ax = performance_fig(rel_performance, col="n_newton_steps")
     f.savefig(HERE / "performance.png", bbox_inches="tight", dpi=300)
 
-    f, ax = performance_fig(df_performance, col="time", yfail=0.01)
-    ax.semilogy()
+    f, ax = performance_fig(rel_performance, col="time")
+    # ax.set_yscale("symlog", linthresh=0.01)
     f.savefig(HERE / "wall-time.png", bbox_inches="tight", dpi=300)
 
     f, _ = illustrative_figure(df_trajectory)
