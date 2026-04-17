@@ -26,8 +26,8 @@ jax.config.update("jax_enable_x64", True)
 DEFAULT_GUESS = jnp.full(5, 0.01)
 ROOT_FINDER = optx.Newton(rtol=1e-9, atol=1e-9)
 ODE_SOLVER = diffrax.Kvaerno5()
-ERROR_SD = 0.05
-PARAM_SD = 0.02
+ERROR_SD = 0.1
+PARAM_SD = 0.1
 TRUE_PARAMS = methionine.parameters
 PRIOR = prior_from_truth(TRUE_PARAMS, PARAM_SD)  # pyright: ignore
 
