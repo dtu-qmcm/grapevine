@@ -5,7 +5,7 @@ import numpy as np
 import polars as pl
 from matplotlib import pyplot as plt
 from matplotlib import ticker
-from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.animation import FuncAnimation
 
 HERE = Path(__file__).parent
 CSV_FILE_METHIONINE = HERE / "methionine.csv"
@@ -51,7 +51,7 @@ def mm_fig(results_df: pl.DataFrame):
 
 
 def performance_fig(results: pl.DataFrame, col):
-    f, ax = plt.subplots(figsize=[10, 5])
+    f, ax = plt.subplots(figsize=[11, 5])
     plot_df = (
         results.with_columns(
             x_jitter=pl.Series(
@@ -79,7 +79,7 @@ def performance_fig(results: pl.DataFrame, col):
             subdf[col],
             label=str(heuristic).replace("_", "-"),
             alpha=0.6,
-            s=8,
+            s=15,
             color=HEURISTIC_COLORS[heuristic],
         )
     ax.axhline(1, color="red", lw=1)
@@ -94,11 +94,17 @@ def performance_fig(results: pl.DataFrame, col):
     )
     ax.set_xticks(
         x["x"],
-        list(x["case"].str.replace("-", "\n")),
-        fontsize="xx-small",
+        list(
+            x["case"]
+            .str.replace("-", "\n")
+            .str.replace(" ", "\n")
+            .str.replace(r"(\dd)", "\n($0)")
+            .str.replace("StyblinskiTang", "Styblinski\nTang")
+        ),
+        fontsize="small",
     )
-    ax.text(-0.06, 1.3, "↑dynamic better", fontsize=8)
-    ax.text(-0.06, 0.7, "↓static better", fontsize=8)
+    ax.text(-0.06, 1.3, "↑dynamic better", fontsize=9)
+    ax.text(-0.06, 0.7, "↓static better", fontsize=9)
     var = "Solver steps" if col == "n_newton_steps" else "Wall time"
     ylabel = f"{var} (static / dynamic)"
     ax.set(ylabel=ylabel, xlabel="Model")
@@ -323,8 +329,8 @@ def main():
     f, _ = illustrative_figure(df_trajectory)
     f.savefig(HERE / "trajectory.png", bbox_inches="tight", dpi=300)
 
-    anim = create_trajectory_animation(df_trajectory)
-    anim.save(HERE / "trajectory.gif", writer=PillowWriter(fps=5))
+    # anim = create_trajectory_animation(df_trajectory)
+    # anim.save(HERE / "trajectory.gif", writer=PillowWriter(fps=5))
 
 
 if __name__ == "__main__":
