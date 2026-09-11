@@ -2,7 +2,7 @@
 
 from functools import partial
 import time
-from typing import Callable
+from typing import Callable, TypedDict, Unpack
 
 import arviz as az
 import equinox as eqx
@@ -15,8 +15,116 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 
 
-# from grapevine.examples import linear_pathway
-from grapevine.util import run_grapenuts, get_idata
+from blackjax.types import ArrayTree
+from blackjax.util import run_inference_algorithm
+
+from grapevine.adaptation import grapenuts_window_adaptation
+from grapevine.grapenuts import grapenuts_sampler
+from grapevine.heuristics import guess_previous
+from grapevine.integrator import grapevine_velocity_verlet
+
+
+def count_steps(solution):
+    """Read the cumulative solver step count out of a solution."""
+    return jnp.asarray(solution[1])
+
+
+def with_step_count(guess_fn):
+    """Adapt a guess function to a solution carrying a step count.
+
+    The benchmark densities return `(solution, cumulative_steps)` so that they
+    can accumulate solver work across a trajectory, so their guesses have the
+    same shape.
+    """
+
+    def wrapped(guess_inputs, position):
+        solution, steps = guess_inputs.solution
+        guess = guess_fn(guess_inputs._replace(solution=solution), position)
+        return guess, steps
+
+    return wrapped
+
+
+class AdaptationKwargs(TypedDict):
+    """Keyword arguments to the blackjax function window_adaptation."""
+
+    initial_step_size: float
+    max_num_doublings: int
+    is_mass_matrix_diagonal: bool
+    target_acceptance_rate: float
+
+
+def run_grapenuts(
+    logdensity_fn: Callable,
+    rng_key: jax.Array,
+    init_parameters: ArrayTree,
+    num_warmup: int,
+    num_samples: int,
+    default_guess: ArrayTree,
+    guess_fn: Callable = guess_previous,
+    solver_info_fn: Callable = count_steps,
+    **adapt_kwargs: Unpack[AdaptationKwargs],
+):
+    """Run grapenuts on a single chain."""
+    warmup = grapenuts_window_adaptation(
+        grapenuts_sampler,
+        logdensity_fn,
+        default_guess,
+        integrator=grapevine_velocity_verlet,
+        guess_fn=guess_fn,
+        solver_info_fn=solver_info_fn,
+        **adapt_kwargs,
+    )
+    rng_key, warmup_key = jax.random.split(rng_key)
+    (initial_state, tuned_parameters), (_, info, _) = warmup.run(
+        warmup_key,
+        init_parameters,
+        num_steps=num_warmup,  #  type: ignore
+    )
+    rng_key, sample_key = jax.random.split(rng_key)
+    kernel = grapenuts_sampler(
+        logdensity_fn,
+        default_guess=default_guess,
+        guess_fn=guess_fn,
+        solver_info_fn=solver_info_fn,
+        **tuned_parameters,
+    )
+    _, (states, info) = run_inference_algorithm(
+        sample_key,
+        kernel,
+        num_steps=num_samples,
+        initial_state=initial_state,
+    )
+    return states, info
+
+
+def get_idata(samples, info, coords=None, dims=None) -> az.InferenceData:
+    """Get an arviz InferenceData from a grapeNUTS output."""
+    sample_dict = jax.tree.map(
+        lambda leaf: jnp.expand_dims(leaf, 0), samples.position
+    )
+    flat = {
+        "|".join(map(str, k)): v
+        for k, v in jax.tree.leaves_with_path(sample_dict)
+    }
+    posterior = az.convert_to_inference_data(
+        flat,
+        group="posterior",
+        coords=coords,
+        dims=dims,
+    )
+    sample_stats = az.convert_to_inference_data(
+        {
+            "diverging": info.is_divergent,
+            "energy": info.energy,
+            "n_newton_steps": samples.solver_info,
+            "n_leapfrog_steps": info.num_integration_steps,
+        },
+        group="sample_stats",
+    )
+    idata = az.concat(posterior, sample_stats)
+    assert idata is not None, "idata should not be None!"
+    return idata
 
 
 def time_run(run_fn):
@@ -50,28 +158,26 @@ def time_run(run_fn):
 def compare_single(
     rng_key: jax.Array,
     true_params: dict,
-    joint_logdensity_funcs: dict,
+    joint_logdensity: Callable,
+    guess_fns: dict,
     run_grapenuts_kwargs: dict,
     sim_func: Callable,
-    default_guess_info: tuple,
+    default_guess: tuple,
 ) -> pl.DataFrame:
     """Run a single comparison of the different guessing heuristics."""
     sim_key, sample_key = jax.random.split(rng_key)
-    # simulate
-    _, sim = sim_func(sim_key, true_params, default_guess_info[0])
-    # posteriors
-    posterior_logdensity_funcs = {
-        k: partial(v, obs=sim) for k, v in joint_logdensity_funcs.items()
-    }
+    _, sim = sim_func(sim_key, true_params, default_guess[0])
+    posterior = partial(joint_logdensity, obs=sim)
     results = []
-    for k, posterior in posterior_logdensity_funcs.items():
+    for k, guess_fn in guess_fns.items():
         run_fn = eqx.filter_jit(
             partial(
                 run_grapenuts,
                 logdensity_fn=posterior,
                 rng_key=sample_key,
                 init_parameters=true_params,
-                default_guess_info=default_guess_info,
+                default_guess=default_guess,
+                guess_fn=guess_fn,
                 **run_grapenuts_kwargs,
             )
         )
@@ -94,13 +200,14 @@ def randomise_params(key, baseline_params, sd):
 
 def run_benchmark(
     random_seed,
-    joint_logdensity_funcs,
+    joint_logdensity: Callable,
+    guess_fns: dict,
     baseline_params: dict,
     param_sd: float,
     n_test: int,
     run_grapenuts_kwargs,
     sim_func: Callable,
-    default_guess_info: tuple,
+    default_guess: tuple,
 ):
     key = jax.random.key(random_seed)
     keys = jax.random.split(key, n_test)
@@ -111,10 +218,11 @@ def run_benchmark(
         result = compare_single(
             compare_key,
             true_params,
-            joint_logdensity_funcs,
+            joint_logdensity,
+            guess_fns,
             run_grapenuts_kwargs,
             sim_func,
-            default_guess_info,
+            default_guess,
         )
         result = result.with_columns(rep=i)
         results.append(result)

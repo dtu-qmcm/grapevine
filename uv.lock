@@ -6,10 +6,10 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version < '3.13' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version < '3.13' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
     "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
@@ -155,7 +155,7 @@ wheels = [
 
 [[package]]
 name = "blackjax"
-version = "1.5"
+version = "1.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax" },
@@ -165,9 +165,9 @@ dependencies = [
     { name = "scipy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/99/2e/49621e028c395730d005bff2272b7bb144b7e0eb40028f8ba569cf6e2712/blackjax-1.5.tar.gz", hash = "sha256:c4a9898d4f5340894301cd382c28d72790e38847edaf4cfc9584dbd47bd205e1", size = 4710254, upload-time = "2026-04-03T07:20:06.962Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/bc/423d304810d0defb54906d220468730895207c9c908cc0ea67d925b463b5/blackjax-1.6.2.tar.gz", hash = "sha256:ad3c97ff6c77cfa17310a68de665d1a48f9d47ff1ac39725082ab235517406ee", size = 5302867, upload-time = "2026-07-16T13:10:25.422Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/a7/83b321492fe7e5d0af07f484ec0100bb6ca561aa64cad1d34fc58a015d0f/blackjax-1.5-py3-none-any.whl", hash = "sha256:f3ba5cab7aeee79939326a49d71a08dd1ce35f647e96ff82d2e8556f19e4e487", size = 4697170, upload-time = "2026-04-03T07:20:05.139Z" },
+    { url = "https://files.pythonhosted.org/packages/39/13/fc2be5e0c9a68c18eb0ea8ece9a0f3b078a513fd8a695f00d506de08db97/blackjax-1.6.2-py3-none-any.whl", hash = "sha256:2989786202cdfc9b0a84f8215c24f2c7985b40ae432136282c3776d979d1236e", size = 4915114, upload-time = "2026-07-16T13:10:23.466Z" },
 ]
 
 [[package]]
@@ -561,57 +561,61 @@ wheels = [
 
 [[package]]
 name = "grapevine-mcmc"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
-    { name = "arviz" },
     { name = "blackjax" },
-    { name = "diffrax" },
     { name = "jax" },
-    { name = "polars" },
 ]
 
 [package.dev-dependencies]
 benchmarks = [
+    { name = "arviz" },
     { name = "cmdstanpy" },
     { name = "diffrax" },
     { name = "enzax" },
+    { name = "equinox" },
     { name = "fastprogress" },
     { name = "ipython" },
+    { name = "lineax" },
     { name = "matplotlib" },
+    { name = "numpy" },
     { name = "optimistix" },
     { name = "polars" },
     { name = "tqdm" },
 ]
 dev = [
     { name = "chex" },
+    { name = "optimistix" },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "arviz", specifier = ">=0.20.0,<1.0.0" },
-    { name = "blackjax", specifier = ">=1.2.4" },
-    { name = "diffrax", specifier = ">=0.6.2" },
+    { name = "blackjax", specifier = ">=1.6.2" },
     { name = "jax", specifier = ">=0.4.38" },
-    { name = "polars", specifier = ">=1.19.0" },
 ]
 
 [package.metadata.requires-dev]
 benchmarks = [
+    { name = "arviz", specifier = ">=0.20.0,<1.0.0" },
     { name = "cmdstanpy", specifier = ">=1.2.5" },
     { name = "diffrax", specifier = ">=0.7.0" },
     { name = "enzax", git = "https://github.com/dtu-qmcm/enzax.git" },
+    { name = "equinox", specifier = ">=0.11.8" },
     { name = "fastprogress", specifier = ">=1.1.5" },
     { name = "ipython", specifier = ">=9.12.0" },
+    { name = "lineax", specifier = ">=0.0.7" },
     { name = "matplotlib", specifier = ">=3.10.0" },
+    { name = "numpy", specifier = ">=2.0" },
     { name = "optimistix", specifier = ">=0.0.10" },
     { name = "polars", specifier = ">=1.19.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
 dev = [
     { name = "chex", specifier = ">=0.1.88" },
+    { name = "optimistix", specifier = ">=0.0.10" },
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "pytest-cov", specifier = ">=6.0.0" },
 ]
@@ -1345,7 +1349,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "ptyprocess" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [

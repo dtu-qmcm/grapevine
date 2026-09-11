@@ -17,7 +17,7 @@ pip install grapevine-mcmc
 
 First make a suitable log density function.
 
-This function should have two arguments: a set of parameters (a [Pytree](https://jax.readthedocs.io/en/latest/pytrees.html)) and a guess (also a Pytree). It should return the log density of these parameters (a number) and a new guess. It should also be generally compatible with JAX, and will probalbly involve some differentiable numerical solving, for example using [optimistix](https://docs.kidger.site/optimistix/).
+This function should have two arguments: a set of parameters (a [Pytree](https://jax.readthedocs.io/en/latest/pytrees.html)) and a guess (also a Pytree). It should return the log density of these parameters (a number) and the solution it found, which grapevine feeds back in as the next guess. It should also be generally compatible with JAX, and will probalbly involve some differentiable numerical solving, for example using [optimistix](https://docs.kidger.site/optimistix/).
 
 Here is a simple example of such a function:
 
@@ -60,30 +60,53 @@ posterior_logdensity(a=0.0, guess=0.01)
 
 Now you can run MCMC on your model using GrapeNUTS, the grapevine version of the [NUTS](http://www.stat.columbia.edu/~gelman/research/published/nuts.pdf) sampler!
 
+grapevine provides the sampler; [blackjax-utils](https://github.com/teddygroves/blackjax-utils) runs it, handling chains, initial jitter and position flattening. `grapenuts` returns the two hooks it needs.
+
 ```python
-from grapevine import run_grapenuts
+from blackjax_utils import run_sampler
+from grapevine import grapenuts
 
-INITIAL_POSITION = jnp.array(0.0)
-DEFAULT_GUESS = jnp.array(0.01)
-SEED = 1234
-
-key = jax.random.key(SEED)
-samples, info = run_grapenuts(
-    logdensity_fn=posterior_logdensity,
-    rng_key=key,
-    init_parameters=INITIAL_POSITION,
-    num_warmup=10,
-    num_samples=10,
-    default_guess=DEFAULT_GUESS,
-    progress_bar=False,
-    initial_step_size=0.01,
-    max_num_doublings=4,
-    is_mass_matrix_diagonal=True,
-    target_acceptance_rate=0.8,
+states, info = run_sampler(
+    key=jax.random.key(1234),
+    log_posterior=posterior_logdensity,
+    init_params=jnp.array(0.0),
+    init_sd=0.01,
+    n_chain=4,
+    n_warmup=200,
+    n_sample=200,
+    warmup_options=dict(initial_step_size=0.01),
+    sampler=grapenuts(default_guess=jnp.array(0.01)),
 )
-jnp.quantile(samples.position, jnp.array([0.01, 0.5, 0.99]))
+jnp.quantile(states.position, jnp.array([0.01, 0.5, 0.99]))
 # Array([-1.26712677,  0.12950684,  0.93903677], dtype=float64)
 ```
+
+## Choosing a guess
+
+`grapenuts` takes a `guess_fn`, which turns the previous problem's solution into
+the next guess. The default, `guess_previous`, reuses the solution as it is.
+`guess_implicit` instead takes an Euler step from it, using the solution's
+jacobian with respect to the parameters, and `guess_implicit_cg` does the same
+without materialising any jacobians:
+
+```python
+from functools import partial
+from grapevine import grapenuts, guess_implicit
+
+sampler = grapenuts(
+    default_guess=jnp.array(0.01),
+    guess_fn=partial(guess_implicit, target_function=fn),
+)
+```
+
+A `guess_fn` is called as `guess_fn(guess_inputs, position)`, where
+`guess_inputs` has the previous solution, the position at which it was found,
+and a flag marking the start of a trajectory. Whatever it returns is what the
+log density gets as its `guess`, so a log density that accumulates diagnostics
+across a trajectory can carry them alongside the solution.
+
+Pass `solver_info_fn` to record something about each iteration's solve, such as
+the number of steps the solver took. It defaults to recording nothing.
 
 # How to run the benchmarks
 
@@ -93,7 +116,8 @@ jnp.quantile(samples.position, jnp.array([0.01, 0.5, 0.99]))
 ```sh
 uv run benchmarks/methionine.py
 uv run benchmarks/linear.py
-uv run benchmarks/rosenbrock.py
+uv run benchmarks/test_functions.py
+uv run benchmarks/adversarial.py
 uv run benchmarks/trajectory.py
 uv run benchmarks/analyse_results.py
 ```
