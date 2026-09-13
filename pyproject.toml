@@ -1,15 +1,12 @@
 [project]
 name = "grapevine-mcmc"
-version = "0.2.0"
+version = "0.3.0"
 description = "Faster Hamiltonian trajectories for problems with guesses, using Blackjax"
 authors = [
     {name = "Teddy Groves", email = "tedgro@dtu.dk"},
 ]
 dependencies = [
-    "blackjax>=1.2.4",
-    "arviz>=0.20.0,<1.0.0",
-    "polars>=1.19.0",
-    "diffrax>=0.6.2",
+    "blackjax>=1.6.2",
     "jax>=0.4.38",
 ]
 requires-python = ">=3.12"
@@ -32,17 +29,22 @@ line-length = 80
 [dependency-groups]
 dev = [
     "chex>=0.1.88",
+    "optimistix>=0.0.10",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
 ]
 benchmarks = [
+    "arviz>=0.20.0,<1.0.0",
     "cmdstanpy>=1.2.5",
-    "matplotlib>=3.10.0",
-    "polars>=1.19.0",
-    "enzax @ git+https://github.com/dtu-qmcm/enzax.git#main",
-    "tqdm>=4.67.1",
     "diffrax>=0.7.0",
-    "optimistix>=0.0.10",
+    "enzax @ git+https://github.com/dtu-qmcm/enzax.git#main",
+    "equinox>=0.11.8",
     "fastprogress>=1.1.5",
     "ipython>=9.12.0",
+    "lineax>=0.0.7",
+    "matplotlib>=3.10.0",
+    "numpy>=2.0",
+    "optimistix>=0.0.10",
+    "polars>=1.19.0",
+    "tqdm>=4.67.1",
 ]

@@ -30,8 +30,10 @@ from grapevine.benchmarking import (
     StyblinskiTang,
     run_benchmark,
     Rosenbrock,
+    with_step_count,
 )
 from grapevine.heuristics import (
+    guess_default,
     guess_implicit,
     guess_previous,
     guess_implicit_cg,
@@ -53,7 +55,6 @@ RUN_GRAPENUTS_KWARGS = dict(
     max_num_doublings=10,
     is_mass_matrix_diagonal=False,
     target_acceptance_rate=0.99,
-    progress_bar=False,
 )
 
 
@@ -65,7 +66,8 @@ class Case:
     solver: optx.Newton
     prior_sd: float
     error_sd: float
-    default_guess_info: tuple
+    default_guess: jax.Array
+    baseline_params: dict
 
 
 CASES = [
@@ -76,11 +78,8 @@ CASES = [
         solver=optx.Newton(rtol=1e-8, atol=1e-8),
         error_sd=0.05,
         prior_sd=0.01,
-        default_guess_info=(
-            jnp.full((2,), jnp.pi),
-            OrderedDict(theta=jnp.full((2,), 0.0)),
-            0,
-        ),
+        default_guess=jnp.full((2,), jnp.pi),
+        baseline_params=OrderedDict(theta=jnp.full((2,), 0.0)),
     ),
     Case(
         name="Levy3d",
@@ -89,11 +88,8 @@ CASES = [
         solver=optx.Newton(rtol=1e-8, atol=1e-8),
         error_sd=0.05,
         prior_sd=0.1,
-        default_guess_info=(
-            jnp.full((3,), 1.0),
-            OrderedDict(theta=jnp.full((3,), 0.0)),
-            0,
-        ),
+        default_guess=jnp.full((3,), 1.0),
+        baseline_params=OrderedDict(theta=jnp.full((3,), 0.0)),
     ),
     Case(
         name="Beale",
@@ -102,11 +98,8 @@ CASES = [
         solver=optx.Newton(rtol=1e-8, atol=1e-8),
         error_sd=0.05,
         prior_sd=0.005,
-        default_guess_info=(
-            jnp.array([3.0, 0.5]),
-            OrderedDict(theta=jnp.full((2,), 0.0)),
-            0,
-        ),
+        default_guess=jnp.array([3.0, 0.5]),
+        baseline_params=OrderedDict(theta=jnp.full((2,), 0.0)),
     ),
     Case(
         name="Rastrigin3d",
@@ -115,11 +108,8 @@ CASES = [
         solver=optx.Newton(rtol=1e-8, atol=1e-8),
         error_sd=0.05,
         prior_sd=0.01,
-        default_guess_info=(
-            jnp.full((3,), 0.0),
-            OrderedDict(theta=jnp.full((3,), 0.0)),
-            0,
-        ),
+        default_guess=jnp.full((3,), 0.0),
+        baseline_params=OrderedDict(theta=jnp.full((3,), 0.0)),
     ),
     Case(
         name="Rosenbrock8d",
@@ -128,11 +118,8 @@ CASES = [
         solver=optx.Newton(rtol=1e-8, atol=1e-8),
         error_sd=0.05,
         prior_sd=0.002,
-        default_guess_info=(
-            jnp.full((8,), 1.0),
-            OrderedDict(theta=jnp.full((8,), 0.0)),
-            0,
-        ),
+        default_guess=jnp.full((8,), 1.0),
+        baseline_params=OrderedDict(theta=jnp.full((8,), 0.0)),
     ),
     Case(
         name="StyblinskiTang3d",
@@ -141,11 +128,8 @@ CASES = [
         solver=optx.Newton(rtol=1e-5, atol=1e-5),
         error_sd=0.05,
         prior_sd=0.3,
-        default_guess_info=(
-            jnp.full((3,), -2.903),
-            OrderedDict(theta=jnp.full((3,), 0.0)),
-            0,
-        ),
+        default_guess=jnp.full((3,), -2.903),
+        baseline_params=OrderedDict(theta=jnp.full((3,), 0.0)),
     ),
     Case(
         name="Rosenbrock3d",
@@ -154,11 +138,8 @@ CASES = [
         solver=optx.Newton(rtol=1e-5, atol=1e-5),
         error_sd=0.05,
         prior_sd=0.3,
-        default_guess_info=(
-            jnp.full((3,), 1.0),
-            OrderedDict(theta=jnp.full((3,), 0.0)),
-            0,
-        ),
+        default_guess=jnp.full((3,), 1.0),
+        baseline_params=OrderedDict(theta=jnp.full((3,), 0.0)),
     ),
 ]
 
@@ -198,30 +179,19 @@ def get_solve_func(f, solver, max_steps):
 def joint_logdensity(
     params,
     obs,
-    guess_info,
-    gfunc,
-    default_guess_info,
+    guess,
     solve_func,
     prior_sd,
     error_sd,
 ):
-    last_solution, _, previous_steps = guess_info
-    default_guess = default_guess_info[0]
-    use_default = jnp.isclose(last_solution, default_guess).all()
-    guess = jax.lax.cond(
-        use_default,
-        lambda g, p: default_guess_info[0],
-        gfunc,
-        guess_info,
-        params,
-    )
+    guess, previous_steps = guess
     solution, steps_here = solve_func(guess, params)
     log_prior = norm.logpdf(
-        params["theta"], loc=jnp.zeros(default_guess.shape), scale=prior_sd
+        params["theta"], loc=jnp.zeros(params["theta"].shape), scale=prior_sd
     ).sum()
     log_likelihood = norm.logpdf(obs, loc=solution, scale=error_sd).sum()
     steps = previous_steps + steps_here
-    return log_prior + log_likelihood, (solution, params, steps)
+    return log_prior + log_likelihood, (solution, steps)
 
 
 def simulate_func(
@@ -244,37 +214,34 @@ def main():
             simulate_func, solve_func=solve, error_sd=case.error_sd
         )
 
-        @jax.jit
-        def guess_static(guess_info, p):
-            return case.default_guess_info[0]
-
-        jlds = {
-            callable_name(gfunc): partial(
+        target = parameterise(case.f)
+        guess_fns = {
+            "guess_implicit": with_step_count(
+                partial(guess_implicit, target_function=target)
+            ),
+            "guess_implicit_cg": with_step_count(
+                partial(guess_implicit_cg, target_function=target)
+            ),
+            "guess_static": with_step_count(
+                partial(guess_default, default_guess=case.default_guess)
+            ),
+            "guess_previous": with_step_count(guess_previous),
+        }
+        case_results = run_benchmark(
+            random_seed=SEED,
+            joint_logdensity=partial(
                 joint_logdensity,
                 solve_func=solve,
                 prior_sd=case.prior_sd,
                 error_sd=case.error_sd,
-                gfunc=gfunc,
-                default_guess_info=case.default_guess_info,
-            )
-            for gfunc in (
-                partial(guess_implicit, target_function=parameterise(case.f)),
-                partial(
-                    guess_implicit_cg, target_function=parameterise(case.f)
-                ),
-                guess_static,
-                guess_previous,
-            )
-        }
-        case_results = run_benchmark(
-            random_seed=SEED,
-            joint_logdensity_funcs=jlds,
-            baseline_params=case.default_guess_info[1],
+            ),
+            guess_fns=guess_fns,
+            baseline_params=case.baseline_params,
             param_sd=case.prior_sd,
             n_test=N_TESTS_PER_CASE,
             run_grapenuts_kwargs=RUN_GRAPENUTS_KWARGS,
             sim_func=simulate,
-            default_guess_info=case.default_guess_info,
+            default_guess=(case.default_guess, jnp.array(0)),
         )
         case_results = case_results.with_columns(case=pl.lit(case.name))
         results_list.append(case_results)
