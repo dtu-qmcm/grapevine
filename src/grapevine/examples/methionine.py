@@ -14,7 +14,9 @@ from enzax.statistical_modelling import (
 )
 from jax import numpy as jnp
 
+from grapevine.benchmarking import with_step_count
 from grapevine.heuristics import (
+    guess_default,
     guess_implicit,
     guess_implicit_cg,
     guess_previous,
@@ -23,17 +25,13 @@ import optimistix as optx
 
 jax.config.update("jax_enable_x64", True)
 
-DEFAULT_GUESS = jnp.full(5, 0.01)
+DEFAULT_GUESS = (jnp.full(5, 0.01), jnp.array(0))
 ROOT_FINDER = optx.Newton(rtol=1e-9, atol=1e-9)
 ODE_SOLVER = diffrax.Kvaerno5()
 ERROR_SD = 0.1
 PARAM_SD = 0.1
 TRUE_PARAMS = methionine.parameters
 PRIOR = prior_from_truth(TRUE_PARAMS, PARAM_SD)  # pyright: ignore
-
-
-def get_default_guess(*args):
-    return DEFAULT_GUESS
 
 
 @jax.jit
@@ -69,14 +67,10 @@ def ode_solve(guess, params):
         raise ValueError("No steady state found.")
 
 
-@partial(jax.jit, static_argnames="gfunc")
-def joint_logdensity(params, obs, guess_info, gfunc):
+@jax.jit
+def joint_logdensity(params, obs, guess):
     log_prior = enzax_prior_logdensity(params, PRIOR)
-    last_solution, _, previous_steps = guess_info
-    use_default = jnp.isclose(last_solution, DEFAULT_GUESS).all()
-    guess = jax.lax.cond(
-        use_default, get_default_guess, gfunc, guess_info, params
-    )
+    guess, previous_steps = guess
     steady, steps_here = ode_solve(guess, params)
     steps = previous_steps + steps_here
     conc_hat = methionine.model.get_conc(steady, params["log_conc_unbalanced"])
@@ -92,7 +86,7 @@ def joint_logdensity(params, obs, guess_info, gfunc):
         (enz_hat, enz_msts, enz_err),
         (flux_hat, flux_msts, flux_err),
     )
-    return log_prior + log_likelihood, (steady, params, steps)
+    return log_prior + log_likelihood, (steady, steps)
 
 
 def simulate(key, params, guess):
@@ -111,17 +105,15 @@ def simulate(key, params, guess):
     )
 
 
-joint_logdensity_guess_default = partial(
-    joint_logdensity, gfunc=lambda g, p: DEFAULT_GUESS
-)
-joint_logdensity_guess_previous = partial(
-    joint_logdensity, gfunc=guess_previous
-)
-joint_logdensity_guess_implicit = partial(
-    joint_logdensity,
-    gfunc=partial(guess_implicit, target_function=methionine.model.dcdt),
-)
-joint_logdensity_guess_implicit_cg = partial(
-    joint_logdensity,
-    gfunc=partial(guess_implicit_cg, target_function=methionine.model.dcdt),
-)
+GUESS_FNS = {
+    "guess_static": with_step_count(
+        partial(guess_default, default_guess=DEFAULT_GUESS[0])
+    ),
+    "guess_previous": with_step_count(guess_previous),
+    "guess_implicit": with_step_count(
+        partial(guess_implicit, target_function=methionine.model.dcdt)
+    ),
+    "guess_implicit_cg": with_step_count(
+        partial(guess_implicit_cg, target_function=methionine.model.dcdt)
+    ),
+}

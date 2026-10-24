@@ -11,8 +11,9 @@ import polars as pl
 from jax import numpy as jnp
 from jax.scipy.stats import norm
 
-from grapevine.benchmarking import run_benchmark
+from grapevine.benchmarking import run_benchmark, with_step_count
 from grapevine.heuristics import (
+    guess_default,
     guess_implicit,
     guess_previous,
     guess_implicit_cg,
@@ -33,7 +34,6 @@ RUN_GRAPENUTS_KWARGS = dict(
     initial_step_size=0.001,
     max_num_doublings=10,
     is_mass_matrix_diagonal=False,
-    progress_bar=False,
 )
 
 
@@ -50,11 +50,8 @@ MAX_STEPS = 1000
 SOLVER = optx.Newton(rtol=1e-8, atol=1e-8)
 ERROR_SD = 0.1
 PRIOR_SD = 0.1
-DEFAULT_GUESS_INFO = (
-    jnp.full((8,), 0.0),
-    OrderedDict(theta=jnp.full((8,), 0.0)),
-    0,
-)
+DEFAULT_GUESS = jnp.full((8,), 0.0)
+BASELINE_PARAMS = OrderedDict(theta=jnp.full((8,), 0.0))
 
 
 def callable_name(any_callable: Callable[..., Any]) -> str:
@@ -84,61 +81,39 @@ def get_solve_func(param_f, solver, max_steps):
 def joint_logdensity_independent(
     params,
     obs,
-    guess_info,
-    gfunc,
-    default_guess_info,
+    guess,
     solve_func,
     prior_sd,
     error_sd,
 ):
-    last_solution, _, previous_steps = guess_info
-    default_guess = default_guess_info[0]
-    use_default = jnp.isclose(last_solution, default_guess).all()
-    guess = jax.lax.cond(
-        use_default,
-        lambda g, p: default_guess_info[0],
-        gfunc,
-        guess_info,
-        params,
-    )
+    guess, previous_steps = guess
     solution, steps_here = solve_func(guess, params)
     log_prior = norm.logpdf(
-        params["theta"], loc=jnp.zeros(default_guess.shape), scale=prior_sd
+        params["theta"], loc=jnp.zeros(params["theta"].shape), scale=prior_sd
     ).sum()
     # Make log probability independent of the root-finding solution
     # so the HMC step size is not forced to be extremely small.
     log_likelihood = 0.0
     steps = previous_steps + steps_here
-    return log_prior + log_likelihood, (solution, params, steps)
+    return log_prior + log_likelihood, (solution, steps)
 
 
 def joint_logdensity_dependent(
     params,
     obs,
-    guess_info,
-    gfunc,
-    default_guess_info,
+    guess,
     solve_func,
     prior_sd,
     error_sd,
 ):
-    last_solution, _, previous_steps = guess_info
-    default_guess = default_guess_info[0]
-    use_default = jnp.isclose(last_solution, default_guess).all()
-    guess = jax.lax.cond(
-        use_default,
-        lambda g, p: default_guess_info[0],
-        gfunc,
-        guess_info,
-        params,
-    )
+    guess, previous_steps = guess
     solution, steps_here = solve_func(guess, params)
     log_prior = norm.logpdf(
-        params["theta"], loc=jnp.zeros(default_guess.shape), scale=prior_sd
+        params["theta"], loc=jnp.zeros(params["theta"].shape), scale=prior_sd
     ).sum()
     log_likelihood = norm.logpdf(obs, loc=solution, scale=error_sd).sum()
     steps = previous_steps + steps_here
-    return log_prior + log_likelihood, (solution, params, steps)
+    return log_prior + log_likelihood, (solution, steps)
 
 
 def simulate_func(
@@ -156,16 +131,18 @@ def main():
     )
     simulate = partial(simulate_func, solve_func=solve, error_sd=ERROR_SD)
 
-    @jax.jit
-    def guess_static(guess_info, p):
-        return DEFAULT_GUESS_INFO[0]
-
-    heuristics = [
-        partial(guess_implicit, target_function=f_parameterised),
-        partial(guess_implicit_cg, target_function=f_parameterised),
-        guess_static,
-        guess_previous,
-    ]
+    guess_fns = {
+        "guess_implicit": with_step_count(
+            partial(guess_implicit, target_function=f_parameterised)
+        ),
+        "guess_implicit_cg": with_step_count(
+            partial(guess_implicit_cg, target_function=f_parameterised)
+        ),
+        "guess_static": with_step_count(
+            partial(guess_default, default_guess=DEFAULT_GUESS)
+        ),
+        "guess_previous": with_step_count(guess_previous),
+    }
 
     all_results = []
 
@@ -175,26 +152,21 @@ def main():
     ]:
         print(f'Benchmarking case "{name}"...')
 
-        jlds = {
-            callable_name(gfunc): partial(
+        case_results = run_benchmark(
+            random_seed=SEED,
+            joint_logdensity=partial(
                 jld_func,
                 solve_func=solve,
                 prior_sd=PRIOR_SD,
                 error_sd=ERROR_SD,
-                gfunc=gfunc,
-                default_guess_info=DEFAULT_GUESS_INFO,
-            )
-            for gfunc in heuristics
-        }
-        case_results = run_benchmark(
-            random_seed=SEED,
-            joint_logdensity_funcs=jlds,
-            baseline_params=DEFAULT_GUESS_INFO[1],
+            ),
+            guess_fns=guess_fns,
+            baseline_params=BASELINE_PARAMS,
             param_sd=PRIOR_SD,
             n_test=N_TESTS_PER_CASE,
             run_grapenuts_kwargs=RUN_GRAPENUTS_KWARGS,
             sim_func=simulate,
-            default_guess_info=DEFAULT_GUESS_INFO,
+            default_guess=(DEFAULT_GUESS, jnp.array(0)),
         )
         case_results = case_results.with_columns(case=pl.lit(name))
         all_results.append(case_results)

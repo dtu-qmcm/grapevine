@@ -7,7 +7,8 @@ from jax.scipy.stats import norm
 import jax
 from jaxtyping import Scalar
 import optimistix as optx
-from grapevine.heuristics import guess_previous
+from grapevine.benchmarking import with_step_count
+from grapevine.heuristics import guess_default, guess_previous
 
 jax.config.update("jax_enable_x64", True)
 
@@ -63,25 +64,16 @@ def solve(guess, theta):
     return sol.value, jnp.array(sol.stats["num_steps"])
 
 
-@partial(jax.jit, static_argnames=("gfunc"))
-def joint_logdensity(params, obs, guess_info, gfunc):
-    default_guess = get_default_guess(params["theta"].shape)
-    last_solution, _, previous_steps = guess_info
-    use_default = jnp.isclose(last_solution, default_guess).all()
-    guess = jax.lax.cond(
-        use_default,
-        lambda g, p: default_guess,
-        gfunc,
-        guess_info,
-        params,
-    )
+@jax.jit
+def joint_logdensity(params, obs, guess):
+    guess, previous_steps = guess
     solution, steps_here = solve(guess, params)
     log_prior = norm.logpdf(
-        params["theta"], loc=jnp.zeros(default_guess.shape), scale=PRIOR_SD
+        params["theta"], loc=jnp.zeros(params["theta"].shape), scale=PRIOR_SD
     ).sum()
     log_likelihood = norm.logpdf(obs, loc=solution, scale=ERROR_SD).sum()
     steps = previous_steps + steps_here
-    return log_prior + log_likelihood, (solution, params, steps)
+    return log_prior + log_likelihood, (solution, steps)
 
 
 def simulate(
@@ -91,9 +83,15 @@ def simulate(
     return sol, sol + jax.random.normal(key, shape=sol.shape) * ERROR_SD
 
 
-joint_logdensity_guess_default = partial(
-    joint_logdensity, gfunc=lambda g, p: get_default_guess(p["theta"].shape)
-)
-joint_logdensity_guess_previous = partial(
-    joint_logdensity, gfunc=guess_previous
-)
+def get_default_guess_info(shape):
+    """The value grapevine starts each trajectory from."""
+    return get_default_guess(shape), jnp.array(0)
+
+
+def get_guess_fns(shape):
+    return {
+        "guess_static": with_step_count(
+            partial(guess_default, default_guess=get_default_guess(shape))
+        ),
+        "guess_previous": with_step_count(guess_previous),
+    }

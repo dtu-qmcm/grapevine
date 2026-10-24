@@ -21,12 +21,14 @@ import polars as pl
 from blackjax.mcmc.metrics import default_metric
 from jax.scipy.stats import norm
 
-from grapevine import run_grapenuts
-from grapevine.benchmarking import Rosenbrock
+
+from grapevine.benchmarking import Rosenbrock, run_grapenuts, with_step_count
+from grapevine.heuristics import guess_default
 from grapevine.heuristics import guess_implicit as _guess_implicit
 from grapevine.heuristics import guess_previous
 from grapevine.integrator import (
     GrapevineIntegratorState,
+    GuessInputs,
     grapevine_velocity_verlet,
 )
 
@@ -45,7 +47,7 @@ inverse_mass_matrix = jnp.array([1, 1])
 metric = default_metric(inverse_mass_matrix)
 TRUE_PARAMS = {"theta": jnp.array([0.0, 0.0])}
 DEFAULT_GUESS = jnp.array([1.0, 1.0])
-DEFAULT_GUESS_INFO = (DEFAULT_GUESS, TRUE_PARAMS, DEFAULT_GUESS, 0)
+DEFAULT_GUESS_INFO = (DEFAULT_GUESS, jnp.array(0))
 SOLVER = optx.Newton(rtol=1e-4, atol=1e-4)
 TARGET_FUNCTION = Rosenbrock(n_dimensions=2)
 
@@ -127,30 +129,24 @@ solve_target_with_steps = get_solve_with_steps(
 )
 
 
-@jax.jit
-def guess_static(guess_info, p):
-    return DEFAULT_GUESS_INFO[0]
-
-
-@jax.jit
-def guess_implicit(guess_info, p):
-    return _guess_implicit(
-        guess_info,
-        p,
-        target_function=parameterise(TARGET_FUNCTION),
-    )
+guess_static = partial(guess_default, default_guess=DEFAULT_GUESS)
+guess_implicit = partial(
+    _guess_implicit, target_function=parameterise(TARGET_FUNCTION)
+)
 
 
 def get_initial_state(initial_position, target_logdensity):
     """Get the initial integrator state."""
     grad_func = jax.value_and_grad(target_logdensity, has_aux=True)
-    (ld, gi), grad = grad_func(initial_position, guess_info=DEFAULT_GUESS_INFO)
+    (ld, _), grad = grad_func(initial_position, guess=DEFAULT_GUESS_INFO)
     return GrapevineIntegratorState(
         position=initial_position,
         momentum=INITIAL_MOMENTUM,
         logdensity=ld,
         logdensity_grad=grad,
-        guess_info=DEFAULT_GUESS_INFO,
+        guess_inputs=GuessInputs(
+            DEFAULT_GUESS_INFO, initial_position, jnp.bool_(True)
+        ),
     )
 
 
@@ -164,23 +160,16 @@ def simulate(
     return sol, sol + jax.random.normal(key, shape=sol.shape) * error_sd
 
 
-def joint_logdensity(params, obs, guess_info, gfunc):
-    last_solution, _, _, _ = guess_info
-    use_default = jnp.isclose(last_solution, DEFAULT_GUESS).all()
-    guess = jax.lax.cond(use_default, guess_static, gfunc, guess_info, params)
-    solution, n_steps = solve_target(guess, params)
+def joint_logdensity(params, obs, guess):
+    guess, previous_steps = guess
+    solution, steps_here = solve_target(guess, params)
     log_prior = norm.logpdf(
         params["theta"],
         loc=jnp.zeros(DEFAULT_GUESS.shape),
         scale=PRIOR_SD,
     ).sum()
     log_likelihood = norm.logpdf(obs, loc=solution, scale=ERROR_SD).sum()
-    return log_prior + log_likelihood, (
-        solution,
-        params,
-        guess,
-        n_steps,
-    )
+    return log_prior + log_likelihood, (solution, previous_steps + steps_here)
 
 
 def test_trajectory(
@@ -193,7 +182,9 @@ def test_trajectory(
     out_list = []
     initial_state = get_initial_state(initial_position, lp_func)
     states = []
-    step = grapevine_velocity_verlet(lp_func, metric.kinetic_energy)
+    step = grapevine_velocity_verlet(
+        lp_func, metric.kinetic_energy, with_step_count(guess_implicit)
+    )
     for i in range(num_integration_steps):
         new_state = jax.lax.fori_loop(
             0,
@@ -206,7 +197,9 @@ def test_trajectory(
     for i, state in enumerate(states[1:]):
         for gfunc_name, gfunc in gfuncs.items():
             guess = (
-                gfunc(previous_state.guess_info, state.position)
+                with_step_count(gfunc)(
+                    previous_state.guess_inputs, state.position
+                )[0]
                 if i > 0
                 else DEFAULT_GUESS
             )
@@ -233,23 +226,19 @@ def main():
     key = jax.random.key(SEED)
     sim_key, mcmc_key = jax.random.split(key)
     _, obs = simulate(sim_key, TRUE_PARAMS, DEFAULT_GUESS_INFO[0], ERROR_SD)
-    log_posterior_guess_implicit = partial(
-        joint_logdensity,
-        obs=obs,
-        gfunc=guess_implicit,
-    )
+    log_posterior_guess_implicit = partial(joint_logdensity, obs=obs)
     run_mcmc = partial(
         run_grapenuts,
         logdensity_fn=log_posterior_guess_implicit,
         init_parameters=TRUE_PARAMS,
-        default_guess_info=DEFAULT_GUESS_INFO,
+        default_guess=DEFAULT_GUESS_INFO,
+        guess_fn=with_step_count(guess_implicit),
         num_warmup=N_WARMUP,
         num_samples=N_SAMPLE,
         initial_step_size=INIT_STEPSIZE,
         max_num_doublings=MAX_TREEDEPTH,
         is_mass_matrix_diagonal=False,
         target_acceptance_rate=TARGET_ACCEPT,
-        progress_bar=False,
     )
     mcmc, info = run_mcmc(rng_key=mcmc_key)
     print(f"Number of divergent transitions: {info.is_divergent.sum()}")

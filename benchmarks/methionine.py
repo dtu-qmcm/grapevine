@@ -15,11 +15,6 @@ SEED = 1234
 HERE = Path(__file__).parent
 CSV_OUTPUT_FILE = HERE / "methionine.csv"
 N_TEST = 20
-DEFAULT_GUESS_INFO = (
-    methionine.DEFAULT_GUESS,
-    methionine.TRUE_PARAMS,
-    0,
-)
 RUN_GRAPENUTS_KWARGS = dict(
     num_warmup=500,
     num_samples=500,
@@ -27,26 +22,25 @@ RUN_GRAPENUTS_KWARGS = dict(
     max_num_doublings=10,
     is_mass_matrix_diagonal=False,
     target_acceptance_rate=0.9,
-    progress_bar=True,
 )
 
 
 def main():
     results = run_benchmark(
         random_seed=SEED,
-        joint_logdensity_funcs={
-            "guess_static": methionine.joint_logdensity_guess_default,
-            "guess_previous": methionine.joint_logdensity_guess_previous,
-            "guess_implicit": methionine.joint_logdensity_guess_implicit,
-            # cg fails - singular jacobian?
-            # "guess_implicit_cg": methionine.joint_logdensity_guess_implicit_cg,
+        joint_logdensity=methionine.joint_logdensity,
+        # cg fails - singular jacobian?
+        guess_fns={
+            k: v
+            for k, v in methionine.GUESS_FNS.items()
+            if k != "guess_implicit_cg"
         },
         baseline_params=methionine.TRUE_PARAMS,
         param_sd=methionine.PARAM_SD,
         n_test=N_TEST,
         run_grapenuts_kwargs=RUN_GRAPENUTS_KWARGS,
         sim_func=methionine.simulate,
-        default_guess_info=DEFAULT_GUESS_INFO,
+        default_guess=methionine.DEFAULT_GUESS,
     )
     print(f"Benchmark results saved to {CSV_OUTPUT_FILE}")
     results.write_csv(CSV_OUTPUT_FILE)

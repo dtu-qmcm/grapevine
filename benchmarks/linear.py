@@ -36,30 +36,20 @@ RUN_GRAPENUTS_KWARGS = dict(
     max_num_doublings=10,
     is_mass_matrix_diagonal=False,
     target_acceptance_rate=0.9,
-    progress_bar=False,
-)
-DEFAULT_GUESS_INFO = (
-    linear_pathway.DEFAULT_GUESS,
-    linear_pathway.TRUE_PARAMS,
-    0,
 )
 
 
 def main():
     results = run_benchmark(
         random_seed=SEED,
-        joint_logdensity_funcs={
-            "guess_static": linear_pathway.joint_logdensity_guess_default,
-            "guess_previous": linear_pathway.joint_logdensity_guess_previous,
-            "guess_implicit": linear_pathway.joint_logdensity_guess_implicit,
-            "guess_implicit_cg": linear_pathway.joint_logdensity_guess_implicit_cg,
-        },
+        joint_logdensity=linear_pathway.joint_logdensity,
+        guess_fns=linear_pathway.GUESS_FNS,
         baseline_params=linear_pathway.TRUE_PARAMS,
         param_sd=linear_pathway.PARAM_SD,
         n_test=N_TEST,
         run_grapenuts_kwargs=RUN_GRAPENUTS_KWARGS,
         sim_func=linear_pathway.simulate,
-        default_guess_info=DEFAULT_GUESS_INFO,
+        default_guess=linear_pathway.DEFAULT_GUESS,
     )
     print(f"Benchmark results saved to {CSV_OUTPUT_FILE}")
     results.write_csv(CSV_OUTPUT_FILE)
