@@ -18,8 +18,8 @@ from pathlib import Path
 
 import jax
 
-from grapevine.examples import linear_pathway
-from grapevine.benchmarking import run_benchmark
+from examples import linear_pathway
+from benchmarking import run_benchmark
 
 # Use 64 bit floats
 jax.config.update("jax_enable_x64", True)

@@ -14,7 +14,7 @@ from enzax.statistical_modelling import (
 )
 from jax import numpy as jnp
 
-from grapevine.benchmarking import with_step_count
+from benchmarking import with_step_count
 from grapevine.heuristics import (
     guess_default,
     guess_implicit,

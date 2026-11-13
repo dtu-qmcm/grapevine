@@ -8,7 +8,7 @@ from grapevine.adaptation import grapenuts_window_adaptation
 from grapevine.grapenuts import grapenuts_sampler
 from grapevine.integrator import grapevine_velocity_verlet
 
-from grapevine.examples.simple_example_problem import (
+from tests.simple_example_problem import (
     posterior_logdensity,
     default_guess,
 )

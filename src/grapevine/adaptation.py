@@ -7,7 +7,7 @@ import blackjax
 from blackjax.base import AdaptationAlgorithm
 from blackjax.types import ArrayTree
 
-from grapevine.grapenuts import no_solver_info
+from grapevine.grapenuts import carry_solution, no_solver_info
 from grapevine.heuristics import guess_previous
 from grapevine.integrator import grapevine_velocity_verlet
 
@@ -20,6 +20,7 @@ def grapenuts_window_adaptation(
     integrator: Callable = grapevine_velocity_verlet,
     guess_fn: Callable = guess_previous,
     solver_info_fn: Callable = no_solver_info,
+    carry_fn: Callable = carry_solution,
     **kwargs,
 ) -> AdaptationAlgorithm:
     """Adapt GrapeNUTS's step size and mass matrix.
@@ -38,6 +39,7 @@ def grapenuts_window_adaptation(
             integrator,
             guess_fn=guess_fn,
             solver_info_fn=solver_info_fn,
+            carry_fn=carry_fn,
         ),
     )
     return blackjax.window_adaptation(

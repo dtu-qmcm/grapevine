@@ -11,7 +11,7 @@ import polars as pl
 from jax import numpy as jnp
 from jax.scipy.stats import norm
 
-from grapevine.benchmarking import run_benchmark, with_step_count
+from benchmarking import run_benchmark, with_step_count
 from grapevine.heuristics import (
     guess_default,
     guess_implicit,

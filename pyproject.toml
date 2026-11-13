@@ -3,11 +3,11 @@ name = "grapevine-mcmc"
 version = "0.3.0"
 description = "Faster Hamiltonian trajectories for problems with guesses, using Blackjax"
 authors = [
-    {name = "ANONYMISED", email = "ANONYMISED@example.com"},
+    {name = "Teddy Groves", email = "tedgro@dtu.dk"},
 ]
 dependencies = [
-    "blackjax>=1.6.2",
-    "jax>=0.4.38",
+    "blackjax>=1.6.2,<1.8",
+    "jax>=0.9.0",
 ]
 requires-python = ">=3.12"
 readme = "README.md"
@@ -26,8 +26,12 @@ packages = ["src/grapevine"]
 [tool.ruff]
 line-length = 80
 
+[tool.uv.sources]
+blackjax-utils = { git = "https://github.com/teddygroves/blackjax-utils.git" }
+
 [dependency-groups]
 dev = [
+    "blackjax-utils",
     "chex>=0.1.88",
     "optimistix>=0.0.10",
     "pytest>=8.3.4",

@@ -6,7 +6,11 @@ from typing import Callable, NamedTuple
 from blackjax.types import ArrayTree
 
 from grapevine.adaptation import grapenuts_window_adaptation
-from grapevine.grapenuts import grapenuts_sampler, no_solver_info
+from grapevine.grapenuts import (
+    carry_solution,
+    grapenuts_sampler,
+    no_solver_info,
+)
 from grapevine.heuristics import guess_previous
 from grapevine.integrator import grapevine_velocity_verlet
 
@@ -36,6 +40,7 @@ def grapenuts(
     integrator: Callable = grapevine_velocity_verlet,
     guess_fn: Callable = guess_previous,
     solver_info_fn: Callable = no_solver_info,
+    carry_fn: Callable = carry_solution,
 ) -> Sampler:
     """Get a GrapeNUTS sampler for a runner such as blackjax_utils.
 
@@ -44,12 +49,16 @@ def grapenuts(
     :param guess_fn: how to turn the previous solution into the next guess
 
     :param solver_info_fn: what to record about each iteration's solve
+
+    :param carry_fn: how to turn a draw's solution into the guess that starts
+        the next trajectory. The default passes the solution on unchanged.
     """
     bound = dict(
         default_guess=default_guess,
         integrator=integrator,
         guess_fn=guess_fn,
         solver_info_fn=solver_info_fn,
+        carry_fn=carry_fn,
     )
     return Sampler(
         partial(grapenuts_warmup, **bound),

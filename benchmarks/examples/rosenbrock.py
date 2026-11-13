@@ -7,7 +7,7 @@ from jax.scipy.stats import norm
 import jax
 from jaxtyping import Scalar
 import optimistix as optx
-from grapevine.benchmarking import with_step_count
+from benchmarking import with_step_count
 from grapevine.heuristics import guess_default, guess_previous
 
 jax.config.update("jax_enable_x64", True)
