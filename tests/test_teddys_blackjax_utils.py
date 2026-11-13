@@ -1,8 +1,8 @@
 import jax
 import pytest
 
-from blackjax_utils import patch_for_shard_map, run_sampler
-from blackjax_utils.shard_map_patch import get_patched_functions
+from teddys_blackjax_utils import patch_for_shard_map, run_sampler
+from teddys_blackjax_utils.shard_map_patch import get_patched_functions
 from jax import numpy as jnp
 
 from grapevine import grapenuts

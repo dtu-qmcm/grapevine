@@ -60,10 +60,10 @@ posterior_logdensity(a=0.0, guess=0.01)
 
 Now you can run MCMC on your model using GrapeNUTS, the grapevine version of the [NUTS](http://www.stat.columbia.edu/~gelman/research/published/nuts.pdf) sampler!
 
-grapevine provides the sampler; [blackjax-utils](https://github.com/teddygroves/blackjax-utils) runs it, handling chains, initial jitter and position flattening. `grapenuts` returns the two hooks it needs.
+grapevine provides the sampler; [teddys-blackjax-utils](https://github.com/teddygroves/teddys-blackjax-utils) runs it, handling chains, initial jitter and position flattening. `grapenuts` returns the two hooks it needs.
 
 ```python
-from blackjax_utils import run_sampler
+from teddys_blackjax_utils import run_sampler
 from grapevine import grapenuts
 
 states, info = run_sampler(
