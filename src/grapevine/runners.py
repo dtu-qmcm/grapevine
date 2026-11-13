@@ -42,7 +42,7 @@ def grapenuts(
     solver_info_fn: Callable = no_solver_info,
     carry_fn: Callable = carry_solution,
 ) -> Sampler:
-    """Get a GrapeNUTS sampler for a runner such as blackjax_utils.
+    """Get a GrapeNUTS sampler for a runner such as teddys_blackjax_utils.
 
     :param default_guess: the guess used at the start of each trajectory
 

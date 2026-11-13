@@ -26,12 +26,9 @@ packages = ["src/grapevine"]
 [tool.ruff]
 line-length = 80
 
-[tool.uv.sources]
-blackjax-utils = { git = "https://github.com/teddygroves/blackjax-utils.git" }
-
 [dependency-groups]
 dev = [
-    "blackjax-utils",
+    "teddys-blackjax-utils>=0.2.1",
     "chex>=0.1.88",
     "optimistix>=0.0.10",
     "pytest>=8.3.4",
