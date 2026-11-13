@@ -22,7 +22,7 @@ import polars as pl
 from jax import numpy as jnp
 from jax.scipy.stats import norm
 
-from grapevine.benchmarking import (
+from benchmarking import (
     Beale,
     Easom,
     Levy,

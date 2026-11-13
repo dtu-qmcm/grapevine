@@ -4,8 +4,8 @@ from pathlib import Path
 
 import jax
 
-from grapevine.examples import methionine
-from grapevine.benchmarking import run_benchmark
+from examples import methionine
+from benchmarking import run_benchmark
 
 # Use 64 bit floats
 jax.config.update("jax_enable_x64", True)

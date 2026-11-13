@@ -22,7 +22,7 @@ from blackjax.mcmc.metrics import default_metric
 from jax.scipy.stats import norm
 
 
-from grapevine.benchmarking import Rosenbrock, run_grapenuts, with_step_count
+from benchmarking import Rosenbrock, run_grapenuts, with_step_count
 from grapevine.heuristics import guess_default
 from grapevine.heuristics import guess_implicit as _guess_implicit
 from grapevine.heuristics import guess_previous

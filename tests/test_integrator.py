@@ -13,7 +13,7 @@ from grapevine.integrator import (
     GrapevineIntegratorState,
     GuessInputs,
 )
-from grapevine.examples.simple_example_problem import (
+from tests.simple_example_problem import (
     posterior_logdensity,
     joint_logdensity,
     default_guess,

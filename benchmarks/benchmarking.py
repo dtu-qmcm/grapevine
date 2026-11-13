@@ -45,6 +45,10 @@ def with_step_count(guess_fn):
     return wrapped
 
 
+def reset_step_count(solution):
+    return solution[0], jnp.zeros_like(solution[1])
+
+
 class AdaptationKwargs(TypedDict):
     """Keyword arguments to the blackjax function window_adaptation."""
 
@@ -73,6 +77,7 @@ def run_grapenuts(
         integrator=grapevine_velocity_verlet,
         guess_fn=guess_fn,
         solver_info_fn=solver_info_fn,
+        carry_fn=reset_step_count,
         **adapt_kwargs,
     )
     rng_key, warmup_key = jax.random.split(rng_key)
@@ -87,6 +92,7 @@ def run_grapenuts(
         default_guess=default_guess,
         guess_fn=guess_fn,
         solver_info_fn=solver_info_fn,
+        carry_fn=reset_step_count,
         **tuned_parameters,
     )
     _, (states, info) = run_inference_algorithm(
@@ -143,10 +149,10 @@ def time_run(run_fn):
         divergences = idata.sample_stats["diverging"].sum()
     except Exception as err:
         print(err)
-        neff = 0.0
-        n_newton_steps = 0
-        runtime = 0.0
-        divergences = 1
+        neff = np.nan
+        n_newton_steps = np.nan
+        runtime = np.nan
+        divergences = np.nan
     return {
         "time": runtime,
         "neff": neff,

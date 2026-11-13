@@ -19,18 +19,36 @@ from grapevine.integrator import (
 
 
 class GrapeNUTSState(NamedTuple):
-    """State of the grapevine sampler."""
+    """State of the grapevine sampler.
+
+    `guess` is the solution found at `position`, carried so that the next
+    trajectory can start from it rather than from the default guess. See
+    `build_kernel`.
+    """
 
     position: ArrayTree
     logdensity: float
     logdensity_grad: ArrayTree
     solver_info: ArrayTree
+    guess: ArrayTree
 
 
 def no_solver_info(solution: ArrayTree) -> None:
     """Record nothing about the solver. The default `solver_info_fn`."""
     del solution
     return None
+
+
+def carry_solution(solution: ArrayTree) -> ArrayTree:
+    return solution
+
+
+def _all_finite(tree: ArrayTree) -> Array:
+    """Whether every leaf of a tree is finite, as a traced boolean."""
+    leaves = jax.tree.leaves(tree)
+    if not leaves:
+        return jnp.bool_(True)
+    return jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
 
 
 def init(
@@ -49,6 +67,7 @@ def init(
         logdensity,
         logdensity_grad,
         solver_info_fn(solution),
+        solution,
     )
 
 
@@ -59,12 +78,14 @@ def build_kernel(
     *,
     guess_fn: Callable = guess_previous,
     solver_info_fn: Callable = no_solver_info,
+    carry_fn: Callable = carry_solution,
 ):
     """Get a GrapeNUTS kernel.
 
     Inspired by [blackjax.mcmc.nuts.build_kernel](https://github.com/blackjax-devs/blackjax/blob/b107f9fd60cfc1261a5ce35690b1d0f141041c07/blackjax/mcmc/nuts.py#L77).
 
-    :param default_guess: the guess used at the start of each trajectory
+    :param default_guess: the guess to fall back on when the previous
+        trajectory's solution cannot be used
 
     :param integrator: a grapevine-style symplectic integrator, e.g. grapevine.grapevine_velocity_verlet
 
@@ -73,6 +94,9 @@ def build_kernel(
     :param guess_fn: how to turn the previous solution into the next guess
 
     :param solver_info_fn: what to record about each iteration's solve
+
+    :param carry_fn: how to turn a draw's solution into the guess that starts
+        the next trajectory. The default passes the solution on unchanged.
 
     """
 
@@ -98,14 +122,35 @@ def build_kernel(
             divergence_threshold,
         )
         key_momentum, key_integrator = jax.random.split(rng_key, 2)
-        position, logdensity, logdensity_grad, _ = state
+        position, logdensity, logdensity_grad, _, guess = state
         momentum = metric.sample_momentum(key_momentum, position)
+        # Start the trajectory from the last solution rather than from
+        # `default_guess`. The first step of a trajectory is otherwise the
+        # only one that throws the grapevine away, and it is the one that
+        # costs the most: on enzax's glycolysis model it took 100.7 ms against
+        # 6.2 ms for every other step, because the fixed default was 276% away
+        # from the root at a posterior draw.
+        #
+        # The fallback is not optional. A solver that fails returns something
+        # non-finite, and starting the next solve there fails again, so
+        # without it one bad solve would poison every trajectory that follows.
+        # Resetting each trajectory used to provide that guarantee for free.
+        usable = _all_finite(guess)
+        guess = jax.tree.map(
+            lambda carried, fallback: jnp.where(usable, carried, fallback),
+            carry_fn(guess),
+            default_guess,
+        )
         integrator_state = GrapevineIntegratorState(
             position,
             momentum,
             logdensity,
             logdensity_grad,
-            GuessInputs(default_guess, position, jnp.bool_(True)),
+            # `is_default` skips `guess_fn`, which needs a position to
+            # extrapolate from. The carried solution has one -- this state's
+            # own position -- so the heuristic applies across the trajectory
+            # boundary too, and only the fallback goes in unextrapolated.
+            GuessInputs(guess, position, ~usable),
         )
         proposal, info = proposal_generator(
             key_integrator,
@@ -117,6 +162,7 @@ def build_kernel(
             proposal.logdensity,
             proposal.logdensity_grad,
             solver_info_fn(proposal.guess_inputs.solution),
+            proposal.guess_inputs.solution,
         )
         return proposal, info
 
@@ -134,6 +180,7 @@ def get_api(
     integrator: Callable = grapevine_velocity_verlet,
     guess_fn: Callable = guess_previous,
     solver_info_fn: Callable = no_solver_info,
+    carry_fn: Callable = carry_solution,
 ) -> SamplingAlgorithm:
     kernel = build_kernel(
         default_guess,
@@ -141,6 +188,7 @@ def get_api(
         divergence_threshold,
         guess_fn=guess_fn,
         solver_info_fn=solver_info_fn,
+        carry_fn=carry_fn,
     )
 
     def init_fn(position: ArrayLikeTree, rng_key=None):

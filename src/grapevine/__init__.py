@@ -1,6 +1,7 @@
 from grapevine.adaptation import grapenuts_window_adaptation
 from grapevine.grapenuts import (
     GrapeNUTSState,
+    carry_solution,
     grapenuts_sampler,
     no_solver_info,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "GrapevineIntegratorState",
     "GuessInputs",
     "Sampler",
+    "carry_solution",
     "grapenuts",
     "grapenuts_kernel",
     "grapenuts_sampler",

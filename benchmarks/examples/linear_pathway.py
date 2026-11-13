@@ -17,7 +17,7 @@ from jax import numpy as jnp
 from jax.scipy.stats import norm
 import jax
 import optimistix as optx
-from grapevine.benchmarking import with_step_count
+from benchmarking import with_step_count
 from grapevine.heuristics import (
     guess_default,
     guess_previous,
